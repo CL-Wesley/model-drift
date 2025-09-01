@@ -191,10 +191,6 @@ POST /api/v1/export/{id}        # Generate reports
 - **Prettier**: Consistent code formatting
 - **Material-UI**: Component library standards
 
-## 📜 **License**
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
 ## 🙏 **Acknowledgments**
 
 - Built with enterprise-grade standards for data science teams
