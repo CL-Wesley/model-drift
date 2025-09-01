@@ -125,12 +125,19 @@ export interface AlertConfiguration {
 }
 
 export type TabType =
+    | 'home'
     | 'upload'
     | 'dashboard'
     | 'feature-analysis'
     | 'statistical-reports'
     | 'model-insights'
-    | 'export-alerts';
+    | 'export-alerts'
+    | 'model-upload'
+    | 'performance-comparison'
+    | 'degradation-metrics'
+    | 'statistical-significance'
+    | 'recommendations'
+    | 'settings';
 
 export interface Theme {
     primary: string;

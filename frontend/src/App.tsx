@@ -3,31 +3,37 @@ import {
     AppBar,
     Toolbar,
     Typography,
-    Tabs,
-    Tab,
     Box,
     Container,
     ThemeProvider,
     createTheme,
     CssBaseline,
-    Paper
+    Paper,
+    Breadcrumbs,
+    Link
 } from '@mui/material';
 import {
-    CloudUpload,
-    Dashboard,
-    Analytics,
-    Assessment,
-    Insights,
-    GetApp
+    Home,
+    NavigateNext
 } from '@mui/icons-material';
 
 import { TabType } from './types';
+import Sidebar from './components/Sidebar';
+
+// Data Drift components
 import UploadTab from './components/UploadTab';
 import DriftDashboard from './components/DriftDashboard';
 import FeatureAnalysis from './components/FeatureAnalysis';
 import StatisticalReports from './components/StatisticalReports';
 import ModelInsights from './components/ModelInsights';
 import ExportAlerts from './components/ExportAlerts';
+
+// Model Drift components
+import ModelUpload from './components/model/ModelUpload';
+import PerformanceComparison from './components/model/PerformanceComparison';
+import DegradationMetrics from './components/model/DegradationMetrics';
+import StatisticalSignificance from './components/model/StatisticalSignificance';
+import Recommendations from './components/model/Recommendations';
 
 // Professional enterprise theme
 const theme = createTheme({
@@ -126,48 +132,89 @@ const theme = createTheme({
     },
 });
 
-const tabConfig = [
-    {
-        id: 'upload' as TabType,
-        label: 'Upload & Configuration',
-        icon: <CloudUpload />,
-    },
-    {
-        id: 'dashboard' as TabType,
-        label: 'Drift Analysis Dashboard',
-        icon: <Dashboard />,
-    },
-    {
-        id: 'feature-analysis' as TabType,
-        label: 'Feature Analysis',
-        icon: <Analytics />,
-    },
-    {
-        id: 'statistical-reports' as TabType,
-        label: 'Statistical Reports',
-        icon: <Assessment />,
-    },
-    {
-        id: 'model-insights' as TabType,
-        label: 'Model Insights',
-        icon: <Insights />,
-    },
-    {
-        id: 'export-alerts' as TabType,
-        label: 'Export & Alerts',
-        icon: <GetApp />,
-    },
-];
+// Navigation structure is now in Sidebar component
 
 function App() {
-    const [activeTab, setActiveTab] = useState<TabType>('upload');
+    const [activeTab, setActiveTab] = useState<TabType>('home');
+    const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
 
-    const handleTabChange = (event: React.SyntheticEvent, newValue: TabType) => {
-        setActiveTab(newValue);
+    const handleTabChange = (id: string) => {
+        setActiveTab(id as TabType);
+    };
+
+    const toggleSidebar = () => {
+        setSidebarOpen(!sidebarOpen);
+    };
+
+    // Get breadcrumb path based on active tab
+    const getBreadcrumbs = () => {
+        if (activeTab === 'home') {
+            return [{ label: 'Home', path: '/' }];
+        }
+        
+        if (activeTab.startsWith('model-') || activeTab === 'performance-comparison' || 
+            activeTab === 'degradation-metrics' || activeTab === 'statistical-significance' || 
+            activeTab === 'recommendations') {
+            return [
+                { label: 'Home', path: '/' },
+                { label: 'Model Drift Analysis', path: '/model-drift' },
+                { 
+                    label: getTabLabel(activeTab), 
+                    path: `/model-drift/${activeTab}` 
+                }
+            ];
+        }
+        
+        return [
+            { label: 'Home', path: '/' },
+            { label: 'Data Drift Analysis', path: '/data-drift' },
+            { 
+                label: getTabLabel(activeTab), 
+                path: `/data-drift/${activeTab}` 
+            }
+        ];
+    };
+
+    // Get tab label based on id
+    const getTabLabel = (tabId: string): string => {
+        switch (tabId) {
+            case 'home': return 'Platform Home';
+            case 'upload': return 'Upload & Configuration';
+            case 'dashboard': return 'Drift Analysis Dashboard';
+            case 'feature-analysis': return 'Feature Deep Dive';
+            case 'statistical-reports': return 'Statistical Reports';
+            case 'model-insights': return 'Model Insights';
+            case 'export-alerts': return 'Export & Alerts';
+            case 'model-upload': return 'Model Upload & Config';
+            case 'performance-comparison': return 'Performance Comparison';
+            case 'degradation-metrics': return 'Degradation Metrics';
+            case 'statistical-significance': return 'Statistical Significance';
+            case 'recommendations': return 'Recommendations';
+            case 'settings': return 'Platform Settings';
+            default: return 'Unknown';
+        }
     };
 
     const renderTabContent = () => {
         switch (activeTab) {
+            case 'home':
+                return (
+                    <Box sx={{ p: 3 }}>
+                        <Typography variant="h4" gutterBottom>Welcome to Drift Detection Platform</Typography>
+                        <Typography variant="body1" paragraph>
+                            This platform helps you detect and analyze both data drift and model drift in your machine learning systems.
+                            Use the sidebar navigation to explore different features.
+                        </Typography>
+                        <Typography variant="h6" gutterBottom>Quick Start:</Typography>
+                        <Typography variant="body1">
+                            1. For Data Drift Analysis: Upload reference and current datasets in the Upload & Configuration section.
+                        </Typography>
+                        <Typography variant="body1">
+                            2. For Model Drift Analysis: Upload reference and current models along with evaluation datasets.
+                        </Typography>
+                    </Box>
+                );
+            // Data Drift Analysis tabs
             case 'upload':
                 return <UploadTab />;
             case 'dashboard':
@@ -180,6 +227,29 @@ function App() {
                 return <ModelInsights />;
             case 'export-alerts':
                 return <ExportAlerts />;
+                
+            // Model Drift Analysis tabs
+            case 'model-upload':
+                return <ModelUpload />;
+            case 'performance-comparison':
+                return <PerformanceComparison />;
+            case 'degradation-metrics':
+                return <DegradationMetrics />;
+            case 'statistical-significance':
+                return <StatisticalSignificance />;
+            case 'recommendations':
+                return <Recommendations />;
+                
+            // Settings tab
+            case 'settings':
+                return (
+                    <Box sx={{ p: 3 }}>
+                        <Typography variant="h5">Coming Soon: Platform Settings</Typography>
+                        <Typography variant="body1" sx={{ mt: 2 }}>
+                            The settings section is under development and will be implemented soon.
+                        </Typography>
+                    </Box>
+                );
             default:
                 return <UploadTab />;
         }
@@ -188,57 +258,100 @@ function App() {
     return (
         <ThemeProvider theme={theme}>
             <CssBaseline />
-            <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-                {/* Header */}
-                <AppBar position="static" elevation={1}>
-                    <Toolbar>
-                        <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 600 }}>
-                            Model Drift Detection Platform
-                        </Typography>
-                        <Typography variant="body2" sx={{ opacity: 0.8 }}>
-                            Enterprise Analytics Suite
-                        </Typography>
-                    </Toolbar>
-                </AppBar>
+            <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+                {/* Sidebar */}
+                <Sidebar 
+                    open={sidebarOpen} 
+                    onToggle={toggleSidebar} 
+                    activeItem={activeTab} 
+                    onItemSelect={handleTabChange} 
+                />
 
-                {/* Navigation Tabs */}
-                <Paper square elevation={1}>
-                    <Container maxWidth={false}>
-                        <Tabs
-                            value={activeTab}
-                            onChange={handleTabChange}
-                            variant="scrollable"
-                            scrollButtons="auto"
-                            sx={{
-                                borderBottom: 1,
-                                borderColor: 'divider',
-                                '& .MuiTab-root': {
-                                    minHeight: 64,
-                                    textTransform: 'none',
-                                    fontSize: '0.95rem',
-                                    fontWeight: 500,
-                                    py: 2,
-                                },
-                            }}
+                {/* Main Content Area */}
+                <Box sx={{ 
+                    flexGrow: 1, 
+                    display: 'flex', 
+                    flexDirection: 'column',
+                    transition: theme.transitions.create('margin', {
+                        easing: theme.transitions.easing.sharp,
+                        duration: theme.transitions.duration.leavingScreen,
+                    }),
+                    marginLeft: 0,
+                }}>
+                    {/* Header */}
+                    <AppBar 
+                        position="static" 
+                        elevation={1} 
+                        color="default" 
+                        sx={{ 
+                            borderBottom: `1px solid ${theme.palette.divider}`,
+                            bgcolor: 'background.paper'
+                        }}
+                    >
+                        <Toolbar>
+                            <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 600, color: 'text.primary' }}>
+                                {getTabLabel(activeTab)}
+                            </Typography>
+                            <Typography variant="body2" sx={{ opacity: 0.8 }}>
+                                Enterprise Analytics Suite
+                            </Typography>
+                        </Toolbar>
+                    </AppBar>
+
+                    {/* Breadcrumbs */}
+                    <Paper 
+                        square 
+                        elevation={0} 
+                        sx={{ 
+                            py: 1.5, 
+                            px: 3, 
+                            borderBottom: `1px solid ${theme.palette.divider}`,
+                            bgcolor: 'background.default'
+                        }}
+                    >
+                        <Breadcrumbs 
+                            separator={<NavigateNext fontSize="small" />} 
+                            aria-label="breadcrumb"
                         >
-                            {tabConfig.map((tab) => (
-                                <Tab
-                                    key={tab.id}
-                                    value={tab.id}
-                                    label={tab.label}
-                                    icon={tab.icon}
-                                    iconPosition="start"
-                                />
-                            ))}
-                        </Tabs>
-                    </Container>
-                </Paper>
+                            {getBreadcrumbs().map((crumb, index) => {
+                                const isLast = index === getBreadcrumbs().length - 1;
+                                return isLast ? (
+                                    <Typography key={crumb.path} color="text.primary" fontWeight={500}>
+                                        {crumb.label}
+                                    </Typography>
+                                ) : (
+                                    <Link 
+                                        key={crumb.path} 
+                                        color="inherit" 
+                                        sx={{ 
+                                            cursor: 'pointer',
+                                            textDecoration: 'none',
+                                            '&:hover': { textDecoration: 'underline' }
+                                        }}
+                                        onClick={() => {
+                                            if (crumb.label === 'Home') {
+                                                handleTabChange('home');
+                                            } else if (crumb.label === 'Data Drift Analysis') {
+                                                handleTabChange('upload');
+                                            } else if (crumb.label === 'Model Drift Analysis') {
+                                                handleTabChange('model-upload');
+                                            }
+                                        }}
+                                    >
+                                        {index === 0 && <Home fontSize="small" sx={{ mr: 0.5, verticalAlign: 'text-bottom' }} />}
+                                        {crumb.label}
+                                    </Link>
+                                );
+                            })}
+                        </Breadcrumbs>
+                    </Paper>
 
-                {/* Main Content */}
-                <Box sx={{ flexGrow: 1, bgcolor: 'background.default', py: 3 }}>
-                    <Container maxWidth={false}>
-                        {renderTabContent()}
-                    </Container>
+                    {/* Main Content */}
+                    <Box sx={{ flexGrow: 1, bgcolor: 'background.default', overflow: 'auto' }}>
+                        <Container maxWidth={false} sx={{ py: 3 }}>
+                            {renderTabContent()}
+                        </Container>
+                    </Box>
                 </Box>
 
                 {/* Footer */}
