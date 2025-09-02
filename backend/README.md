@@ -60,13 +60,6 @@ cp .env.example .env
 # Configure your environment variables
 ```
 
-### Development
-```bash
-npm run dev          # Start development server
-npm run test         # Run test suite
-npm run test:watch   # Watch mode for tests
-```
-
 ## 🎯 Development Workflow
 
 ### For Data Drift Developer:
@@ -137,7 +130,6 @@ Frontend Upload → Unified Upload Service → Module Router → Specific Module
 
 - **API Documentation**: Available at `/docs` when server is running
 - **Module-Specific Guides**: See individual README files
-- **Postman Collections**: Located in `docs/postman/`
 
 ## 🚨 Important Notes
 
@@ -168,8 +160,4 @@ Both modules will be deployed as a single unified backend service.
 - **Shared Components**: Discuss with both team members
 - **Infrastructure**: Contact DevOps team
 
----
 
-**Happy Coding! 🎉**
-
-*This README serves as your central hub. Each module has its own detailed README with specific implementation guidelines.*
