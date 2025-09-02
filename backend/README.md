@@ -30,8 +30,7 @@ backend/
 │   │   ├── config/          # Configuration management
 │   │   └── utils/           # Common utilities
 │   │
-│   ├── app.js              # Main Express application
-│   └── server.js           # Server entry point
+│   ├── main.py              # Main FastAPI app wiring all routers
 │
 ├── uploads/                 # File storage directory
 ├── tests/                   # Test suites (unit & integration)
@@ -43,15 +42,14 @@ backend/
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js (v16+)
-- Python (v3.8+) for ML processing
+- Python 3.8+  
+- (Optional) Node.js for any shared utilities
 - MongoDB or PostgreSQL (TBD based on requirements)
 
 ### Installation
 ```bash
 cd backend
-npm install
-pip install -r requirements.txt  # For ML dependencies
+pip install -r requirements.txt  # Install core Python dependencies (FastAPI, pandas, scipy, etc.)
 ```
 
 ### Environment Setup
@@ -60,27 +58,25 @@ cp .env.example .env
 # Configure your environment variables
 ```
 
-## 🎯 Development Workflow
+## 🏃‍♂️ Running the Server
 
-### For Data Drift Developer:
-1. **Focus Area**: `src/data_drift/` directory
-2. **Setup Guide**: Read `src/data_drift/README.md`
-3. **API Testing**: Use provided Postman collection
-4. **Local Testing**: Simple upload endpoints pre-configured
+- Start the unified FastAPI backend:
 
-### For Model Drift Developer:
-1. **Focus Area**: `src/model_drift/` directory
-2. **Setup Guide**: Read `src/model_drift/README.md`
-3. **API Testing**: Use provided Postman collection
-4. **Frontend Integration**: APIs match frontend expectations
+```bash
+cd backend
+uvicorn src.main:app --reload --port 8001  # Starts FastAPI server
+```
+
+- Swagger UI: `http://localhost:8001/docs`  
+- ReDoc: `http://localhost:8001/redoc`
 
 ## 🔌 API Architecture
 
 ### Base URL Structure
 ```
-/api/v1/data-drift/*     # All data drift endpoints
-/api/v1/model-drift/*    # All model drift endpoints
-/api/v1/upload/*         # Unified upload system
+/api/v1/data-drift/*     # All data drift endpoints (FastAPI)
+/api/v1/model-drift/*    # All model drift endpoints (FastAPI)
+/api/v1/upload/*         # Unified upload system (FastAPI)
 ```
 
 ### Shared Endpoints
