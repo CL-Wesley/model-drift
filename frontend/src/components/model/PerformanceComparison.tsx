@@ -15,17 +15,20 @@ import {
     CardContent,
     Tooltip,
     IconButton,
-    Divider,
+    Alert,
 } from '@mui/material';
 import { Info, TrendingDown, TrendingUp, TrendingFlat } from '@mui/icons-material';
-import { 
-    Radar, 
-    RadarChart, 
-    PolarGrid, 
-    PolarAngleAxis, 
-    PolarRadiusAxis, 
+import {
+    BarChart,
+    Bar,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip as ChartTooltip,
     ResponsiveContainer,
-    Legend
+    Legend,
+    LineChart,
+    Line
 } from 'recharts';
 
 // Mock data for performance comparison
@@ -150,7 +153,7 @@ const PerformanceComparison: React.FC = () => {
                     Executive Overview
                 </Typography>
                 <Grid container spacing={3}>
-                    <Grid item xs={12} md={4}>
+                    <Grid item xs={12} md={3}>
                         <Card sx={{ height: '100%', bgcolor: 'background.default' }}>
                             <CardContent>
                                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
@@ -170,29 +173,48 @@ const PerformanceComparison: React.FC = () => {
                             </CardContent>
                         </Card>
                     </Grid>
-                    <Grid item xs={12} md={4}>
+                    <Grid item xs={12} md={3}>
                         <Card sx={{ height: '100%', bgcolor: 'background.default' }}>
                             <CardContent>
                                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                                     Risk Assessment
                                 </Typography>
                                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                                    <Chip 
-                                        label={performanceData.riskLevel} 
-                                        color={performanceData.riskLevel === 'High' ? 'error' : 
-                                               performanceData.riskLevel === 'Medium' ? 'warning' : 'success'}
+                                    <Chip
+                                        label={performanceData.riskLevel}
+                                        color={performanceData.riskLevel === 'High' ? 'error' :
+                                            performanceData.riskLevel === 'Medium' ? 'warning' : 'success'}
                                         sx={{ fontSize: '1.1rem', py: 2, px: 1 }}
                                     />
                                 </Box>
                                 <Typography variant="body2" color="text.secondary">
-                                    {performanceData.significance.accuracy.significant ? 
-                                        'Statistically significant performance degradation detected.' : 
+                                    {performanceData.significance.accuracy.significant ?
+                                        'Statistically significant performance degradation detected.' :
                                         'No statistically significant performance degradation detected.'}
                                 </Typography>
                             </CardContent>
                         </Card>
                     </Grid>
-                    <Grid item xs={12} md={4}>
+                    <Grid item xs={12} md={3}>
+                        <Card sx={{ height: '100%', bgcolor: 'background.default' }}>
+                            <CardContent>
+                                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                                    Model Drift Detected
+                                </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                                    <Chip
+                                        label="YES"
+                                        color="error"
+                                        sx={{ fontSize: '1.1rem', py: 2, px: 1, fontWeight: 'bold' }}
+                                    />
+                                </Box>
+                                <Typography variant="body2" color="text.secondary">
+                                    Significant drift detected in model performance metrics requiring immediate attention.
+                                </Typography>
+                            </CardContent>
+                        </Card>
+                    </Grid>
+                    <Grid item xs={12} md={3}>
                         <Card sx={{ height: '100%', bgcolor: 'background.default' }}>
                             <CardContent>
                                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
@@ -215,35 +237,33 @@ const PerformanceComparison: React.FC = () => {
                 </Grid>
             </Paper>
 
-            {/* Radar Chart Comparison */}
+            {/* Bar Chart Comparison */}
             <Paper sx={{ p: 3, mb: 3 }}>
                 <Typography variant="h6" gutterBottom>
-                    Metric Comparison
+                    Performance Metrics Comparison
                 </Typography>
                 <Box sx={{ height: 400, width: '100%' }}>
                     <ResponsiveContainer width="100%" height="100%">
-                        <RadarChart cx="50%" cy="50%" outerRadius="80%" data={radarData}>
-                            <PolarGrid />
-                            <PolarAngleAxis dataKey="metric" />
-                            <PolarRadiusAxis angle={30} domain={[0, 100]} />
-                            <Radar
-                                name="Reference Model"
-                                dataKey="reference"
-                                stroke="#8884d8"
-                                fill="#8884d8"
-                                fillOpacity={0.6}
-                            />
-                            <Radar
-                                name="Current Model"
-                                dataKey="current"
-                                stroke="#82ca9d"
-                                fill="#82ca9d"
-                                fillOpacity={0.6}
-                            />
+                        <BarChart data={radarData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="metric" />
+                            <YAxis domain={[0, 100]} label={{ value: 'Performance (%)', angle: -90, position: 'insideLeft' }} />
+                            <ChartTooltip formatter={(value: any) => [`${value.toFixed(1)}%`, '']} />
                             <Legend />
-                        </RadarChart>
+                            <Bar dataKey="reference" fill="#8884d8" name="Reference Model" />
+                            <Bar dataKey="current" fill="#82ca9d" name="Current Model" />
+                        </BarChart>
                     </ResponsiveContainer>
                 </Box>
+
+                {/* Performance Insights */}
+                <Alert severity="warning" sx={{ mt: 2 }}>
+                    <Typography variant="body2" fontWeight="bold">Performance Analysis:</Typography>
+                    <Typography variant="body2">
+                        Current model shows degradation across all metrics. F1-Score decreased by 2.4%,
+                        indicating potential overfitting or data drift impact. Immediate model retraining recommended.
+                    </Typography>
+                </Alert>
             </Paper>
 
             {/* Detailed Metrics Table */}
@@ -259,8 +279,6 @@ const PerformanceComparison: React.FC = () => {
                                 <TableCell align="right">Reference Model</TableCell>
                                 <TableCell align="right">Current Model</TableCell>
                                 <TableCell align="right">Delta</TableCell>
-                                <TableCell align="right">Significance (p-value)</TableCell>
-                                <TableCell align="right">95% CI</TableCell>
                             </TableRow>
                         </TableHead>
                         <TableBody>
@@ -274,24 +292,6 @@ const PerformanceComparison: React.FC = () => {
                                         {getTrendIndicator(performanceData.deltas.accuracy).icon}
                                     </Box>
                                 </TableCell>
-                                <TableCell align="right">
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                                        {performanceData.significance.accuracy.pValue.toFixed(3)}
-                                        {performanceData.significance.accuracy.significant && (
-                                            <Tooltip title="Statistically significant at α=0.05">
-                                                <IconButton size="small">
-                                                    <Info fontSize="small" color="warning" />
-                                                </IconButton>
-                                            </Tooltip>
-                                        )}
-                                    </Box>
-                                </TableCell>
-                                <TableCell align="right">
-                                    {formatCI(
-                                        performanceData.confidenceIntervals.accuracy.lower,
-                                        performanceData.confidenceIntervals.accuracy.upper
-                                    )}
-                                </TableCell>
                             </TableRow>
 
                             <TableRow>
@@ -303,24 +303,6 @@ const PerformanceComparison: React.FC = () => {
                                         {formatPercent(performanceData.deltas.precision)}
                                         {getTrendIndicator(performanceData.deltas.precision).icon}
                                     </Box>
-                                </TableCell>
-                                <TableCell align="right">
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                                        {performanceData.significance.precision.pValue.toFixed(3)}
-                                        {performanceData.significance.precision.significant && (
-                                            <Tooltip title="Statistically significant at α=0.05">
-                                                <IconButton size="small">
-                                                    <Info fontSize="small" color="warning" />
-                                                </IconButton>
-                                            </Tooltip>
-                                        )}
-                                    </Box>
-                                </TableCell>
-                                <TableCell align="right">
-                                    {formatCI(
-                                        performanceData.confidenceIntervals.precision.lower,
-                                        performanceData.confidenceIntervals.precision.upper
-                                    )}
                                 </TableCell>
                             </TableRow>
 
@@ -334,24 +316,6 @@ const PerformanceComparison: React.FC = () => {
                                         {getTrendIndicator(performanceData.deltas.recall).icon}
                                     </Box>
                                 </TableCell>
-                                <TableCell align="right">
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                                        {performanceData.significance.recall.pValue.toFixed(3)}
-                                        {performanceData.significance.recall.significant && (
-                                            <Tooltip title="Statistically significant at α=0.05">
-                                                <IconButton size="small">
-                                                    <Info fontSize="small" color="warning" />
-                                                </IconButton>
-                                            </Tooltip>
-                                        )}
-                                    </Box>
-                                </TableCell>
-                                <TableCell align="right">
-                                    {formatCI(
-                                        performanceData.confidenceIntervals.recall.lower,
-                                        performanceData.confidenceIntervals.recall.upper
-                                    )}
-                                </TableCell>
                             </TableRow>
 
                             <TableRow>
@@ -363,24 +327,6 @@ const PerformanceComparison: React.FC = () => {
                                         {formatPercent(performanceData.deltas.f1Score)}
                                         {getTrendIndicator(performanceData.deltas.f1Score).icon}
                                     </Box>
-                                </TableCell>
-                                <TableCell align="right">
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                                        {performanceData.significance.f1Score.pValue.toFixed(3)}
-                                        {performanceData.significance.f1Score.significant && (
-                                            <Tooltip title="Statistically significant at α=0.05">
-                                                <IconButton size="small">
-                                                    <Info fontSize="small" color="warning" />
-                                                </IconButton>
-                                            </Tooltip>
-                                        )}
-                                    </Box>
-                                </TableCell>
-                                <TableCell align="right">
-                                    {formatCI(
-                                        performanceData.confidenceIntervals.f1Score.lower,
-                                        performanceData.confidenceIntervals.f1Score.upper
-                                    )}
                                 </TableCell>
                             </TableRow>
 
@@ -394,24 +340,6 @@ const PerformanceComparison: React.FC = () => {
                                         {getTrendIndicator(performanceData.deltas.aucRoc).icon}
                                     </Box>
                                 </TableCell>
-                                <TableCell align="right">
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                                        {performanceData.significance.aucRoc.pValue.toFixed(3)}
-                                        {performanceData.significance.aucRoc.significant && (
-                                            <Tooltip title="Statistically significant at α=0.05">
-                                                <IconButton size="small">
-                                                    <Info fontSize="small" color="warning" />
-                                                </IconButton>
-                                            </Tooltip>
-                                        )}
-                                    </Box>
-                                </TableCell>
-                                <TableCell align="right">
-                                    {formatCI(
-                                        performanceData.confidenceIntervals.aucRoc.lower,
-                                        performanceData.confidenceIntervals.aucRoc.upper
-                                    )}
-                                </TableCell>
                             </TableRow>
 
                             <TableRow>
@@ -423,24 +351,6 @@ const PerformanceComparison: React.FC = () => {
                                         {formatPercent(performanceData.deltas.aucPr)}
                                         {getTrendIndicator(performanceData.deltas.aucPr).icon}
                                     </Box>
-                                </TableCell>
-                                <TableCell align="right">
-                                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
-                                        {performanceData.significance.aucPr.pValue.toFixed(3)}
-                                        {performanceData.significance.aucPr.significant && (
-                                            <Tooltip title="Statistically significant at α=0.05">
-                                                <IconButton size="small">
-                                                    <Info fontSize="small" color="warning" />
-                                                </IconButton>
-                                            </Tooltip>
-                                        )}
-                                    </Box>
-                                </TableCell>
-                                <TableCell align="right">
-                                    {formatCI(
-                                        performanceData.confidenceIntervals.aucPr.lower,
-                                        performanceData.confidenceIntervals.aucPr.upper
-                                    )}
                                 </TableCell>
                             </TableRow>
                         </TableBody>

@@ -27,8 +27,7 @@ import {
     BarChart,
     ShowChart,
     CompareArrows,
-    TrendingDown,
-    Recommend
+    TrendingDown
 } from '@mui/icons-material';
 
 // Define the navigation item structure
@@ -80,6 +79,12 @@ const navigationItems: NavItem[] = [
                 path: '/data-drift/feature-analysis'
             },
             {
+                id: 'class-imbalance',
+                label: 'Class Imbalance Analysis',
+                icon: <Assessment />,
+                path: '/data-drift/class-imbalance'
+            },
+            {
                 id: 'statistical-reports',
                 label: 'Statistical Reports',
                 icon: <Assessment />,
@@ -99,12 +104,6 @@ const navigationItems: NavItem[] = [
         icon: <ShowChart />,
         children: [
             {
-                id: 'model-upload',
-                label: 'Model Upload & Config',
-                icon: <CloudUpload />,
-                path: '/model-drift/upload'
-            },
-            {
                 id: 'performance-comparison',
                 label: 'Performance Comparison',
                 icon: <CompareArrows />,
@@ -121,12 +120,6 @@ const navigationItems: NavItem[] = [
                 label: 'Statistical Significance',
                 icon: <Assessment />,
                 path: '/model-drift/significance'
-            },
-            {
-                id: 'recommendations',
-                label: 'Recommendations',
-                icon: <Recommend />,
-                path: '/model-drift/recommendations'
             }
         ]
     },
@@ -170,9 +163,9 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onToggle, activeItem, onItemSel
 
         return (
             <React.Fragment key={item.id}>
-                <ListItem 
-                    disablePadding 
-                    sx={{ 
+                <ListItem
+                    disablePadding
+                    sx={{
                         display: 'block',
                         pl: level * (open ? 2 : 0)
                     }}
@@ -184,8 +177,8 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onToggle, activeItem, onItemSel
                             px: 2.5,
                             bgcolor: isActive ? `${theme.palette.primary.main}15` : 'transparent',
                             '&:hover': {
-                                bgcolor: isActive 
-                                    ? `${theme.palette.primary.main}25` 
+                                bgcolor: isActive
+                                    ? `${theme.palette.primary.main}25`
                                     : `${theme.palette.primary.main}10`,
                             },
                             borderLeft: isActive ? `4px solid ${theme.palette.primary.main}` : '4px solid transparent',
@@ -212,15 +205,15 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onToggle, activeItem, onItemSel
                         </Tooltip>
                         {open && (
                             <>
-                                <ListItemText 
-                                    primary={item.label} 
-                                    sx={{ 
+                                <ListItemText
+                                    primary={item.label}
+                                    sx={{
                                         opacity: open ? 1 : 0,
                                         color: isActive ? theme.palette.primary.main : 'inherit',
                                         '& .MuiTypography-root': {
                                             fontWeight: isActive ? 600 : 400
                                         }
-                                    }} 
+                                    }}
                                 />
                                 {hasChildren && (
                                     isExpanded ? <ChevronLeft /> : <ChevronRight />
@@ -266,9 +259,9 @@ const Sidebar: React.FC<SidebarProps> = ({ open, onToggle, activeItem, onItemSel
                 },
             }}
         >
-            <Box sx={{ 
-                display: 'flex', 
-                alignItems: 'center', 
+            <Box sx={{
+                display: 'flex',
+                alignItems: 'center',
                 justifyContent: open ? 'space-between' : 'center',
                 padding: theme.spacing(2),
                 borderBottom: `1px solid ${theme.palette.divider}`,

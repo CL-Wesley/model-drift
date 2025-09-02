@@ -29,11 +29,10 @@ import ModelInsights from './components/ModelInsights';
 import ExportAlerts from './components/ExportAlerts';
 
 // Model Drift components
-import ModelUpload from './components/model/ModelUpload';
 import PerformanceComparison from './components/model/PerformanceComparison';
 import DegradationMetrics from './components/model/DegradationMetrics';
 import StatisticalSignificance from './components/model/StatisticalSignificance';
-import Recommendations from './components/model/Recommendations';
+import ClassImbalanceAnalysis from './components/ClassImbalanceAnalysis';
 
 // Professional enterprise theme
 const theme = createTheme({
@@ -151,26 +150,25 @@ function App() {
         if (activeTab === 'home') {
             return [{ label: 'Home', path: '/' }];
         }
-        
-        if (activeTab.startsWith('model-') || activeTab === 'performance-comparison' || 
-            activeTab === 'degradation-metrics' || activeTab === 'statistical-significance' || 
-            activeTab === 'recommendations') {
+
+        if (activeTab.startsWith('model-') || activeTab === 'performance-comparison' ||
+            activeTab === 'degradation-metrics' || activeTab === 'statistical-significance') {
             return [
                 { label: 'Home', path: '/' },
                 { label: 'Model Drift Analysis', path: '/model-drift' },
-                { 
-                    label: getTabLabel(activeTab), 
-                    path: `/model-drift/${activeTab}` 
+                {
+                    label: getTabLabel(activeTab),
+                    path: `/model-drift/${activeTab}`
                 }
             ];
         }
-        
+
         return [
             { label: 'Home', path: '/' },
             { label: 'Data Drift Analysis', path: '/data-drift' },
-            { 
-                label: getTabLabel(activeTab), 
-                path: `/data-drift/${activeTab}` 
+            {
+                label: getTabLabel(activeTab),
+                path: `/data-drift/${activeTab}`
             }
         ];
     };
@@ -182,14 +180,13 @@ function App() {
             case 'upload': return 'Upload & Configuration';
             case 'dashboard': return 'Drift Analysis Dashboard';
             case 'feature-analysis': return 'Feature Deep Dive';
+            case 'class-imbalance': return 'Class Imbalance Analysis';
             case 'statistical-reports': return 'Statistical Reports';
             case 'model-insights': return 'Model Insights';
             case 'export-alerts': return 'Export & Alerts';
-            case 'model-upload': return 'Model Upload & Config';
             case 'performance-comparison': return 'Performance Comparison';
             case 'degradation-metrics': return 'Degradation Metrics';
             case 'statistical-significance': return 'Statistical Significance';
-            case 'recommendations': return 'Recommendations';
             case 'settings': return 'Platform Settings';
             default: return 'Unknown';
         }
@@ -221,25 +218,22 @@ function App() {
                 return <DriftDashboard />;
             case 'feature-analysis':
                 return <FeatureAnalysis />;
+            case 'class-imbalance':
+                return <ClassImbalanceAnalysis />;
             case 'statistical-reports':
                 return <StatisticalReports />;
             case 'model-insights':
                 return <ModelInsights />;
             case 'export-alerts':
                 return <ExportAlerts />;
-                
-            // Model Drift Analysis tabs
-            case 'model-upload':
-                return <ModelUpload />;
+
             case 'performance-comparison':
                 return <PerformanceComparison />;
             case 'degradation-metrics':
                 return <DegradationMetrics />;
             case 'statistical-significance':
                 return <StatisticalSignificance />;
-            case 'recommendations':
-                return <Recommendations />;
-                
+
             // Settings tab
             case 'settings':
                 return (
@@ -260,17 +254,17 @@ function App() {
             <CssBaseline />
             <Box sx={{ display: 'flex', minHeight: '100vh' }}>
                 {/* Sidebar */}
-                <Sidebar 
-                    open={sidebarOpen} 
-                    onToggle={toggleSidebar} 
-                    activeItem={activeTab} 
-                    onItemSelect={handleTabChange} 
+                <Sidebar
+                    open={sidebarOpen}
+                    onToggle={toggleSidebar}
+                    activeItem={activeTab}
+                    onItemSelect={handleTabChange}
                 />
 
                 {/* Main Content Area */}
-                <Box sx={{ 
-                    flexGrow: 1, 
-                    display: 'flex', 
+                <Box sx={{
+                    flexGrow: 1,
+                    display: 'flex',
                     flexDirection: 'column',
                     transition: theme.transitions.create('margin', {
                         easing: theme.transitions.easing.sharp,
@@ -279,11 +273,11 @@ function App() {
                     marginLeft: 0,
                 }}>
                     {/* Header */}
-                    <AppBar 
-                        position="static" 
-                        elevation={1} 
-                        color="default" 
-                        sx={{ 
+                    <AppBar
+                        position="static"
+                        elevation={1}
+                        color="default"
+                        sx={{
                             borderBottom: `1px solid ${theme.palette.divider}`,
                             bgcolor: 'background.paper'
                         }}
@@ -299,18 +293,18 @@ function App() {
                     </AppBar>
 
                     {/* Breadcrumbs */}
-                    <Paper 
-                        square 
-                        elevation={0} 
-                        sx={{ 
-                            py: 1.5, 
-                            px: 3, 
+                    <Paper
+                        square
+                        elevation={0}
+                        sx={{
+                            py: 1.5,
+                            px: 3,
                             borderBottom: `1px solid ${theme.palette.divider}`,
                             bgcolor: 'background.default'
                         }}
                     >
-                        <Breadcrumbs 
-                            separator={<NavigateNext fontSize="small" />} 
+                        <Breadcrumbs
+                            separator={<NavigateNext fontSize="small" />}
                             aria-label="breadcrumb"
                         >
                             {getBreadcrumbs().map((crumb, index) => {
@@ -320,10 +314,10 @@ function App() {
                                         {crumb.label}
                                     </Typography>
                                 ) : (
-                                    <Link 
-                                        key={crumb.path} 
-                                        color="inherit" 
-                                        sx={{ 
+                                    <Link
+                                        key={crumb.path}
+                                        color="inherit"
+                                        sx={{
                                             cursor: 'pointer',
                                             textDecoration: 'none',
                                             '&:hover': { textDecoration: 'underline' }
@@ -334,7 +328,7 @@ function App() {
                                             } else if (crumb.label === 'Data Drift Analysis') {
                                                 handleTabChange('upload');
                                             } else if (crumb.label === 'Model Drift Analysis') {
-                                                handleTabChange('model-upload');
+                                                handleTabChange('performance-comparison');
                                             }
                                         }}
                                     >
