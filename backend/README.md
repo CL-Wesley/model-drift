@@ -42,19 +42,19 @@ backend/
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Python 3.8+  
+- Python 3.10 or 3.11  
 - (Optional) Node.js for any shared utilities
 - MongoDB or PostgreSQL (TBD based on requirements)
 
 ### Installation
 ```bash
 cd backend
-pip install -r requirements.txt  # Install core Python dependencies (FastAPI, pandas, scipy, etc.)
+pip install -r requirements.txt  # Install core Python dependencies in your venv (FastAPI, pandas, scipy, etc.)
 ```
 
 ### Environment Setup
-```bash
-cp .env.example .env
+```
+python -m venv venv
 # Configure your environment variables
 ```
 
@@ -64,7 +64,7 @@ cp .env.example .env
 
 ```bash
 cd backend
-uvicorn src.main:app --reload --port 8001  # Starts FastAPI server
+uvicorn src.main:app --reload --port 8001  # Starts FastAPI server (this changes according to how YOU or me will modify data drift or Model drift, so there is no CONFUSION !!!!)
 ```
 
 - Swagger UI: `http://localhost:8001/docs`  
