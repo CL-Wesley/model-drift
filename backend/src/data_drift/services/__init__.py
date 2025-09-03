@@ -8,3 +8,7 @@ This package contains:
 - Threshold management
 - Data preprocessing utilities
 """
+
+from .drift_service import run_data_drift
+
+__all__ = ["run_data_drift"]

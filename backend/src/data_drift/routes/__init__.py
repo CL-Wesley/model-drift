@@ -9,3 +9,7 @@ This package contains all the API endpoints for:
 - Class imbalance analysis
 - File uploads and configuration
 """
+
+from .upload import router
+
+__all__ = ["router"]
