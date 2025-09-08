@@ -81,12 +81,24 @@ class MetricsCalculationService:
                 try:
                     # ROC AUC
                     if len(np.unique(y_true)) == 2:  # Binary classification
-                        metrics["roc_auc"] = float(roc_auc_score(y_true, y_pred_proba))
+                        # For binary classification, use only positive class probabilities
+                        if y_pred_proba.ndim == 2 and y_pred_proba.shape[1] == 2:
+                            proba_positive = y_pred_proba[:, 1]
+                        else:
+                            proba_positive = y_pred_proba
+                        metrics["roc_auc"] = float(roc_auc_score(y_true, proba_positive))
                     else:  # Multi-class
                         metrics["roc_auc"] = float(roc_auc_score(y_true, y_pred_proba, multi_class='ovr', average='weighted'))
                     
                     # Average Precision (PR AUC)
-                    metrics["average_precision"] = float(average_precision_score(y_true, y_pred_proba, average='weighted'))
+                    if len(np.unique(y_true)) == 2:  # Binary classification
+                        if y_pred_proba.ndim == 2 and y_pred_proba.shape[1] == 2:
+                            proba_positive = y_pred_proba[:, 1]
+                        else:
+                            proba_positive = y_pred_proba
+                        metrics["average_precision"] = float(average_precision_score(y_true, proba_positive))
+                    else:
+                        metrics["average_precision"] = float(average_precision_score(y_true, y_pred_proba, average='weighted'))
                     
                     # Log Loss
                     metrics["log_loss"] = float(log_loss(y_true, y_pred_proba))

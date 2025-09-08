@@ -84,6 +84,12 @@ class StatisticalTestsService:
             Dictionary with test results
         """
         try:
+            # Handle binary classification probabilities
+            if pred_ref_proba.ndim == 2 and pred_ref_proba.shape[1] == 2:
+                pred_ref_proba = pred_ref_proba[:, 1]  # Use positive class probabilities
+            if pred_curr_proba.ndim == 2 and pred_curr_proba.shape[1] == 2:
+                pred_curr_proba = pred_curr_proba[:, 1]  # Use positive class probabilities
+            
             # Calculate AUCs
             auc_ref = roc_auc_score(y_true, pred_ref_proba)
             auc_curr = roc_auc_score(y_true, pred_curr_proba)

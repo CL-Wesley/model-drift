@@ -26,6 +26,9 @@ from ..models.response_models import (
     PerformanceMetrics, DriftMetrics, StatisticalTestResult
 )
 from ..services.core.statistical_tests_service import statistical_tests_service
+from ..services.analysis.performance_comparison_service import performance_comparison_service
+from ..services.analysis.degradation_metrics_service import degradation_metrics_service
+from ..services.analysis.statistical_significance_service import statistical_significance_service
 
 warnings.filterwarnings('ignore')
 
@@ -157,6 +160,190 @@ class EnhancedModelService:
                 error_message=str(e),
                 error_code="ANALYSIS_FAILED"
             )
+    
+    async def run_performance_comparison_analysis(
+        self,
+        reference_data: UploadFile,
+        current_data: UploadFile,
+        model_file: UploadFile,
+        config: AnalysisConfiguration
+    ) -> dict:
+        """
+        Run Tab 1: Performance Comparison analysis
+        
+        Args:
+            reference_data: Reference dataset file
+            current_data: Current dataset file
+            model_file: Model file
+            config: Analysis configuration from frontend
+            
+        Returns:
+            Performance comparison results
+        """
+        try:
+            analysis_id = f"performance_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Load and validate data
+            ref_df, curr_df, model = await self._load_and_validate_inputs(
+                reference_data, current_data, model_file
+            )
+            
+            # Prepare data based on model type
+            X_ref, X_curr, y_ref, y_curr = await self._prepare_data(
+                ref_df, curr_df, model, config.model_type
+            )
+            
+            # Get model information
+            model_info = self._extract_model_info(model, ref_df, curr_df)
+            
+            # Use performance comparison service directly
+            performance_result = performance_comparison_service.analyze_performance_comparison(
+                y_true=y_curr,  # Use current data as test set
+                pred_ref=model.predict(X_ref),  # Reference predictions
+                pred_curr=model.predict(X_curr),  # Current predictions
+                pred_ref_proba=model.predict_proba(X_ref) if hasattr(model, 'predict_proba') else None,
+                pred_curr_proba=model.predict_proba(X_curr) if hasattr(model, 'predict_proba') else None,
+                X=X_curr,
+                model_ref=model,
+                model_curr=model
+            )
+            
+            return {
+                "analysis_id": analysis_id,
+                "model_info": model_info,
+                "timestamp": datetime.now().isoformat(),
+                "config": config.dict(),
+                "performance_comparison": performance_result
+            }
+            
+        except Exception as e:
+            error_msg = f"Performance comparison analysis failed: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg)
+    
+    async def run_degradation_metrics_analysis(
+        self,
+        reference_data: UploadFile,
+        current_data: UploadFile,
+        model_file: UploadFile,
+        config: AnalysisConfiguration
+    ) -> dict:
+        """
+        Run Tab 2: Degradation Metrics analysis (with sub-tabs)
+        
+        Args:
+            reference_data: Reference dataset file
+            current_data: Current dataset file
+            model_file: Model file
+            config: Analysis configuration from frontend
+            
+        Returns:
+            Degradation metrics results with sub-tab structure
+        """
+        try:
+            analysis_id = f"degradation_metrics_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Load and validate data
+            ref_df, curr_df, model = await self._load_and_validate_inputs(
+                reference_data, current_data, model_file
+            )
+            
+            # Prepare data based on model type
+            X_ref, X_curr, y_ref, y_curr = await self._prepare_data(
+                ref_df, curr_df, model, config.model_type
+            )
+            
+            # Get model information
+            model_info = self._extract_model_info(model, ref_df, curr_df)
+            
+            # Use degradation metrics service directly
+            degradation_result = degradation_metrics_service.analyze_degradation_metrics(
+                y_true=y_curr,  # Use current data as test set
+                pred_ref=model.predict(X_ref),  # Reference predictions
+                pred_curr=model.predict(X_curr),  # Current predictions
+                pred_ref_proba=model.predict_proba(X_ref) if hasattr(model, 'predict_proba') else None,
+                pred_curr_proba=model.predict_proba(X_curr) if hasattr(model, 'predict_proba') else None,
+                X_ref=X_ref,
+                y_ref=y_ref,
+                X_curr=X_curr,
+                y_curr=y_curr,
+                model_ref=model,
+                model_curr=model,
+                feature_names=list(ref_df.columns[:-1])  # Exclude target column
+            )
+            
+            return {
+                "analysis_id": analysis_id,
+                "model_info": model_info,
+                "timestamp": datetime.now().isoformat(),
+                "config": config.dict(),
+                "degradation_metrics": degradation_result
+            }
+            
+        except Exception as e:
+            error_msg = f"Degradation metrics analysis failed: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg)
+    
+    async def run_statistical_significance_analysis(
+        self,
+        reference_data: UploadFile,
+        current_data: UploadFile,
+        model_file: UploadFile,
+        config: AnalysisConfiguration
+    ) -> dict:
+        """
+        Run Tab 3: Statistical Significance analysis
+        
+        Args:
+            reference_data: Reference dataset file
+            current_data: Current dataset file
+            model_file: Model file
+            config: Analysis configuration from frontend
+            
+        Returns:
+            Statistical significance results
+        """
+        try:
+            analysis_id = f"statistical_significance_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Load and validate data
+            ref_df, curr_df, model = await self._load_and_validate_inputs(
+                reference_data, current_data, model_file
+            )
+            
+            # Prepare data based on model type
+            X_ref, X_curr, y_ref, y_curr = await self._prepare_data(
+                ref_df, curr_df, model, config.model_type
+            )
+            
+            # Get model information
+            model_info = self._extract_model_info(model, ref_df, curr_df)
+            
+            # Use statistical significance service directly
+            statistical_result = statistical_significance_service.analyze_statistical_significance(
+                y_true=y_curr,  # Use current data as test set
+                pred_ref=model.predict(X_ref),  # Reference predictions
+                pred_curr=model.predict(X_curr),  # Current predictions
+                pred_ref_proba=model.predict_proba(X_ref) if hasattr(model, 'predict_proba') else None,
+                pred_curr_proba=model.predict_proba(X_curr) if hasattr(model, 'predict_proba') else None,
+                X=X_curr,
+                model_ref=model,
+                model_curr=model
+            )
+            
+            return {
+                "analysis_id": analysis_id,
+                "model_info": model_info,
+                "timestamp": datetime.now().isoformat(),
+                "config": config.dict(),
+                "statistical_significance": statistical_result
+            }
+            
+        except Exception as e:
+            error_msg = f"Statistical significance analysis failed: {str(e)}"
+            print(error_msg)
+            raise ValueError(error_msg)
     
     async def _load_and_validate_inputs(
         self, 

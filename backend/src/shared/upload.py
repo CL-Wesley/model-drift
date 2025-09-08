@@ -5,9 +5,9 @@ import pandas as pd
 import json
 
 # Import the service functions
-from data_drift.services.drift_service import run_data_drift
-from model_drift.services.enhanced_model_service import enhanced_model_service
-from model_drift.models.analysis_config import AnalysisConfiguration, ModelType, DriftThresholds
+from ..data_drift.services.drift_service import run_data_drift
+from ..model_drift.services.enhanced_model_service import enhanced_model_service
+from ..model_drift.models.analysis_config import AnalysisConfiguration, ModelType, DriftThresholds
 from pydantic import ValidationError
 
 router = APIRouter(prefix="/api/v1", tags=["upload"])
