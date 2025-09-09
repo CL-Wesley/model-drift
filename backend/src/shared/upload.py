@@ -3,39 +3,37 @@ from typing import Optional, Dict, Any
 import io
 import pandas as pd
 import json
+import uuid
+from datetime import datetime
+from .session_manager import get_session_manager
 
-# Import the service functions
-from ..data_drift.services.drift_service import run_data_drift
-from ..model_drift.services.enhanced_model_service import enhanced_model_service
-from ..model_drift.models.analysis_config import AnalysisConfiguration, ModelType, DriftThresholds
-from pydantic import ValidationError
-
-router = APIRouter(prefix="/api/v1", tags=["upload"])
+router = APIRouter(prefix="/api/v1", tags=["Unified Upload"])
 
 @router.post("/upload")
 async def unified_upload(
     reference_data: UploadFile = File(..., description="Reference dataset CSV file"),
     current_data: UploadFile = File(..., description="Current dataset CSV file"),
     model_file: Optional[UploadFile] = File(None, description="Optional: Trained model pickle file"),
-    low_threshold: float = Form(0.05, description="Low drift threshold"),
-    medium_threshold: float = Form(0.15, description="Medium drift threshold"),
-    high_threshold: float = Form(0.25, description="High drift threshold")
+    config: Optional[str] = Form(None, description="Optional JSON configuration for Model Drift analysis"),
+    session_id: Optional[str] = None
 ):
     """
-    Legacy unified upload endpoint (backward compatibility)
+    Unified upload endpoint for both Data Drift and Model Drift analysis
     
-    - **reference_data**: CSV file containing the reference/baseline dataset
-    - **current_data**: CSV file containing the current dataset to compare against reference
-    - **model_file**: Optional pickle or joblib file containing trained model (triggers model drift analysis)
-    - **low_threshold**: Threshold for low drift detection (default: 0.05)
-    - **medium_threshold**: Threshold for medium drift detection (default: 0.15)
-    - **high_threshold**: Threshold for high drift detection (default: 0.25)
-    
-    Returns combined analysis results from both data drift and model drift (if model provided)
+    Args:
+        reference_data: CSV file containing the reference/baseline dataset
+        current_data: CSV file containing the current dataset to compare against reference  
+        model_file: Optional pickle or joblib file containing trained model (enables model drift analysis)
+        session_id: Optional session ID, if not provided a new one will be generated
+        
+    Returns:
+        Session information that can be used for both data drift and model drift analysis
     """
-    from model_drift.services.model_service import run_model_drift
-    
     try:
+        # Generate session ID if not provided
+        if not session_id:
+            session_id = str(uuid.uuid4())
+        
         # Validate file types
         if not reference_data.filename.endswith('.csv'):
             raise HTTPException(status_code=400, detail="Reference data must be a CSV file")
@@ -44,301 +42,217 @@ async def unified_upload(
         if model_file and not (model_file.filename.lower().endswith(('.pkl', '.pickle', '.joblib', '.pkl.joblib'))):
             raise HTTPException(status_code=400, detail="Model file must be a pickle (.pkl, .pickle) or joblib (.joblib) file")
 
-        # Validate thresholds
-        if not (0 < low_threshold < medium_threshold < high_threshold < 1):
-            raise HTTPException(status_code=400, detail="Thresholds must be: 0 < low < medium < high < 1")
-
-        # Always run data drift analysis
-        print("Running data drift analysis...")
-        data_drift_result = await run_data_drift(
-            reference_data, 
-            current_data, 
-            low_threshold, 
-            medium_threshold, 
-            high_threshold
-        )
-
-        # Run model drift analysis if model file is provided
-        model_drift_result = None
-        if model_file:
-            print("Running model drift analysis...")
-            model_drift_result = await run_model_drift(reference_data, current_data, model_file)
-
-        # Create comprehensive response
-        response = {
-            "upload_info": {
-                "reference_file": reference_data.filename,
-                "current_file": current_data.filename,
-                "model_file": model_file.filename if model_file else None,
-                "timestamp": pd.Timestamp.now().isoformat()
-            },
-            "analysis_results": {
-                "data_drift": data_drift_result,
-                "model_drift": model_drift_result
-            },
-            "summary": {
-                "data_drift_detected": get_drift_status(data_drift_result),
-                "model_drift_detected": get_drift_status(model_drift_result) if model_drift_result else False,
-                "analysis_type": "combined" if model_file else "data_only"
-            }
-        }
-
-        return response
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
-
-@router.post("/analyze")
-async def unified_analyze(
-    reference_data: UploadFile = File(..., description="Reference dataset CSV file"),
-    current_data: UploadFile = File(..., description="Current dataset CSV file"),
-    model_file: Optional[UploadFile] = File(None, description="Optional: Trained model file"),
-    config: Optional[str] = Form(None, description="JSON configuration for model drift analysis")
-):
-    """
-    Enhanced unified analysis endpoint with JSON configuration
-    
-    - **reference_data**: CSV file containing the reference/baseline dataset
-    - **current_data**: CSV file containing the current dataset to compare
-    - **model_file**: Optional trained model file (enables model drift analysis)
-    - **config**: JSON configuration string for model drift analysis
-    
-    Config JSON format (required if model_file provided):
-    {
-        "analysis_name": "My Analysis",
-        "description": "Optional description",
-        "model_type": "classification",
-        "selected_metrics": ["accuracy", "precision", "recall"],
-        "statistical_test": "mcnemar",
-        "low_threshold": 0.05,
-        "medium_threshold": 0.15,
-        "high_threshold": 0.25
-    }
-    """
-    from model_drift.services.model_service import run_model_drift
-    
-    try:
-        # Default values
-        low_threshold = 0.05
-        medium_threshold = 0.15 
-        high_threshold = 0.25
-        analysis_name = "Drift Analysis"
-        description = ""
-        
-        # Parse config if provided
+        # Validate and parse configuration if provided
         parsed_config = None
         if config:
             try:
-                config_dict = json.loads(config)
-                # Use values from config
-                analysis_name = config_dict.get("analysis_name", analysis_name)
-                description = config_dict.get("description", description)
-                low_threshold = config_dict.get("low_threshold", low_threshold)
-                medium_threshold = config_dict.get("medium_threshold", medium_threshold)
-                high_threshold = config_dict.get("high_threshold", high_threshold)
-                
-                # Store parsed config for model drift
-                parsed_config = config_dict
-            except (json.JSONDecodeError, ValueError) as e:
-                raise HTTPException(status_code=400, detail=f"Invalid config JSON: {str(e)}")
+                parsed_config = json.loads(config)
+                # Basic configuration validation for Model Drift
+                if model_file:  # Only validate if model is provided
+                    required_fields = ["model_type", "selected_metrics"]
+                    for field in required_fields:
+                        if field not in parsed_config:
+                            raise HTTPException(status_code=400, detail=f"Missing required configuration field: {field}")
+                    
+                    # Validate model_type
+                    if parsed_config["model_type"].lower() not in ["classification", "regression"]:
+                        raise HTTPException(status_code=400, detail="model_type must be 'classification' or 'regression'")
+                        
+                    # Validate selected_metrics is a list
+                    if not isinstance(parsed_config["selected_metrics"], list) or not parsed_config["selected_metrics"]:
+                        raise HTTPException(status_code=400, detail="selected_metrics must be a non-empty list")
+                        
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON configuration: {str(e)}")
+
+        # Read CSV files
+        reference_content = await reference_data.read()
+        current_content = await current_data.read()
         
-        # Validate file types
-        if not reference_data.filename.endswith('.csv'):
-            raise HTTPException(status_code=400, detail="Reference data must be a CSV file")
-        if not current_data.filename.endswith('.csv'):
-            raise HTTPException(status_code=400, detail="Current data must be a CSV file")
-        if model_file and not (model_file.filename.lower().endswith(('.pkl', '.pickle', '.joblib', '.pkl.joblib'))):
-            raise HTTPException(status_code=400, detail="Model file must be a pickle (.pkl, .pickle) or joblib (.joblib) file")
-
-        # Validate thresholds
-        if not (0 < low_threshold < medium_threshold < high_threshold < 1):
-            raise HTTPException(status_code=400, detail="Thresholds must be: 0 < low < medium < high < 1")
-
-        # Read files into memory to avoid file stream exhaustion
-        print("Reading files into memory...")
-        reference_bytes = await reference_data.read()
-        current_bytes = await current_data.read()
-        model_bytes = None
+        # Convert to pandas DataFrames
+        try:
+            reference_df = pd.read_csv(io.StringIO(reference_content.decode('utf-8')))
+            current_df = pd.read_csv(io.StringIO(current_content.decode('utf-8')))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to parse CSV files: {str(e)}")
+        
+        # Basic validation
+        if reference_df.empty or current_df.empty:
+            raise HTTPException(status_code=400, detail="Uploaded files cannot be empty")
+        
+        # Handle model file if provided
+        model_file_content = None
+        model_filename = None
         if model_file:
-            model_bytes = await model_file.read()
+            model_file_content = await model_file.read()
+            model_filename = model_file.filename
         
-        # Create temporary UploadFile-like class for reuse
-        class TempUploadFile:
-            def __init__(self, file_obj, filename):
-                self.file = file_obj
-                self.filename = filename
-                self.content_type = "text/csv" if filename.endswith('.csv') else "application/octet-stream"
-            
-            async def read(self):
-                self.file.seek(0)
-                return self.file.read()
-            
-            def __getattr__(self, name):
-                return getattr(self.file, name)
+        # Store in unified session manager
+        session_manager = get_session_manager()
         
-        # Create file-like objects for data drift analysis
-        reference_file_for_drift = io.BytesIO(reference_bytes)
-        reference_file_for_drift.name = reference_data.filename
+        # Store configuration in session if provided
+        session_config = parsed_config if parsed_config else None
         
-        current_file_for_drift = io.BytesIO(current_bytes)
-        current_file_for_drift.name = current_data.filename
-        
-        temp_ref_file = TempUploadFile(reference_file_for_drift, reference_data.filename)
-        temp_curr_file = TempUploadFile(current_file_for_drift, current_data.filename)
-
-        # Always run data drift analysis
-        print("Running data drift analysis...")
-        data_drift_result = await run_data_drift(
-            temp_ref_file, 
-            temp_curr_file, 
-            low_threshold, 
-            medium_threshold, 
-            high_threshold
+        created_session_id = session_manager.create_session(
+            reference_df=reference_df,
+            current_df=current_df,
+            reference_filename=reference_data.filename,
+            current_filename=current_data.filename,
+            model_file_content=model_file_content,
+            model_filename=model_filename,
+            session_id=session_id
         )
-
-        # Run model drift analysis if model file is provided
-        model_drift_result = None
-        if model_file and parsed_config:
-            print("Running enhanced model drift analysis with configuration...")
-            
-            # Validate required config fields for model drift
-            required_fields = ["model_type", "selected_metrics", "statistical_test"]
-            missing_fields = [field for field in required_fields if field not in parsed_config]
-            if missing_fields:
-                raise HTTPException(status_code=400, detail=f"Missing required config fields for model drift: {missing_fields}")
-            
-            # Create configuration object for model drift
-            try:
-                model_type_enum = ModelType(parsed_config["model_type"].lower())
-                
-                full_config = AnalysisConfiguration(
-                    analysis_name=analysis_name,
-                    description=description,
-                    model_type=model_type_enum,
-                    selected_metrics=parsed_config["selected_metrics"],
-                    statistical_test=parsed_config["statistical_test"],
-                    drift_thresholds=DriftThresholds(
-                        low_threshold=low_threshold,
-                        medium_threshold=medium_threshold,
-                        high_threshold=high_threshold
-                    )
-                )
-                
-                # Run enhanced model drift analysis
-                # Create fresh file objects for model drift from bytes
-                reference_file_for_model = io.BytesIO(reference_bytes)
-                current_file_for_model = io.BytesIO(current_bytes)
-                model_file_for_model = io.BytesIO(model_bytes)
-                
-                # Set filenames for the file objects
-                reference_file_for_model.name = reference_data.filename
-                current_file_for_model.name = current_data.filename
-                model_file_for_model.name = model_file.filename
-                
-                # Create temporary UploadFile objects for model drift
-                temp_ref_file_model = TempUploadFile(reference_file_for_model, reference_data.filename)
-                temp_curr_file_model = TempUploadFile(current_file_for_model, current_data.filename)
-                temp_model_file = TempUploadFile(model_file_for_model, model_file.filename)
-                
-                model_drift_result = await enhanced_model_service.run_configured_analysis(
-                    temp_ref_file_model, temp_curr_file_model, temp_model_file, full_config
-                )
-                
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=f"Invalid model_type: {parsed_config['model_type']}. Must be 'classification' or 'regression'")
-            except ValidationError as e:
-                raise HTTPException(status_code=400, detail=f"Configuration validation error: {str(e)}")
-                
-        elif model_file and not parsed_config:
-            print("Running basic model drift analysis (no configuration provided)...")
-            # Create fresh file objects for basic model drift from bytes
-            reference_file_for_model = io.BytesIO(reference_bytes)
-            current_file_for_model = io.BytesIO(current_bytes)
-            model_file_for_model = io.BytesIO(model_bytes)
-            
-            # Set filenames for the file objects
-            reference_file_for_model.name = reference_data.filename
-            current_file_for_model.name = current_data.filename
-            model_file_for_model.name = model_file.filename
-            
-            # Create temporary UploadFile objects for basic model drift
-            temp_ref_file_model = TempUploadFile(reference_file_for_model, reference_data.filename)
-            temp_curr_file_model = TempUploadFile(current_file_for_model, current_data.filename)
-            temp_model_file = TempUploadFile(model_file_for_model, model_file.filename)
-            
-            # Fallback to basic model drift analysis
-            model_drift_result = await run_model_drift(temp_ref_file_model, temp_curr_file_model, temp_model_file)
-
-        # Create comprehensive response
-        response = {
-            "upload_info": {
-                "reference_file": reference_data.filename,
-                "current_file": current_data.filename,
-                "model_file": model_file.filename if model_file else None,
-                "timestamp": pd.Timestamp.now().isoformat(),
-                "analysis_name": analysis_name,
-                "description": description
+        
+        # Store configuration in session after creation
+        if session_config and model_file:
+            session_manager._storage[created_session_id]["config"] = session_config
+        
+        # Prepare response
+        response_data = {
+            "session_id": created_session_id,
+            "message": "Files uploaded successfully",
+            "data": {
+                "reference_shape": reference_df.shape,
+                "current_shape": current_df.shape,
+                "reference_columns": list(reference_df.columns),
+                "current_columns": list(current_df.columns),
+                "common_columns": list(set(reference_df.columns) & set(current_df.columns)),
+                "has_model": model_file is not None,
+                "upload_timestamp": datetime.utcnow().isoformat()
             },
-            "analysis_results": {
-                "data_drift": data_drift_result,
-                "model_drift": model_drift_result.dict() if hasattr(model_drift_result, 'dict') else model_drift_result
-            },
-            "summary": {
-                "data_drift_detected": get_drift_status(data_drift_result),
-                "model_drift_detected": get_enhanced_drift_status(model_drift_result) if model_drift_result else False,
-                "analysis_type": "enhanced_combined" if (model_file and parsed_config) else ("combined" if model_file else "data_only"),
-                "configuration_used": bool(model_file and parsed_config)
+            "analysis_endpoints": {
+                "data_drift": {
+                    "dashboard": f"/data-drift/dashboard/{created_session_id}",
+                    "class_imbalance": f"/data-drift/class-imbalance/analysis/{created_session_id}",
+                    "statistical_reports": f"/data-drift/statistical-reports/{created_session_id}",
+                    "feature_analysis": f"/data-drift/feature-analysis/{created_session_id}"
+                }
             }
         }
-
-        return response
-
+        
+        # Add model drift endpoints if model was provided
+        if model_file:
+            response_data["analysis_endpoints"]["model_drift"] = {
+                "performance_comparison": f"/model-drift/performance-comparison/{created_session_id}",
+                "degradation_metrics": f"/model-drift/degradation-metrics/{created_session_id}",
+                "statistical_significance": f"/model-drift/statistical-significance/{created_session_id}"
+            }
+        
+        return {
+            "status": "success",
+            **response_data
+        }
+        
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
-def get_drift_status(result: Optional[Dict[str, Any]]) -> bool:
-    """Helper function to extract drift detection status from analysis results"""
-    if not result:
-        return False
+@router.get("/session/{session_id}/info")
+async def get_unified_session_info(session_id: str):
+    """
+    Get information about a unified session
     
-    # Check if there's an error
-    if "error" in result:
-        return False
-    
-    # Check for explicit drift_detected field
-    if "drift_detected" in result:
-        return result["drift_detected"]
-    
-    # Check drift severity for data drift results
-    if "drift_metrics" in result and "drift_severity" in result["drift_metrics"]:
-        severity = result["drift_metrics"]["drift_severity"]
-        return severity in ["Medium", "High"]
-    
-    return False
+    Args:
+        session_id: Session identifier
+        
+    Returns:
+        Session information including available analysis types
+    """
+    try:
+        session_manager = get_session_manager()
+        if not session_manager.session_exists(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = session_manager.get_session(session_id)
+        
+        response_data = {
+            "session_id": session_id,
+            "data": {
+                "reference_filename": session_data["reference_filename"],
+                "current_filename": session_data["current_filename"],
+                "reference_shape": session_data["reference_shape"],
+                "current_shape": session_data["current_shape"],
+                "common_columns": session_data["common_columns"],
+                "common_columns_count": len(session_data["common_columns"]),
+                "has_model": session_data["has_model"],
+                "upload_timestamp": session_data["upload_timestamp"]
+            },
+            "analysis_endpoints": {
+                "data_drift": {
+                    "dashboard": f"/data-drift/dashboard/{session_id}",
+                    "class_imbalance": f"/data-drift/class-imbalance/analysis/{session_id}",
+                    "statistical_reports": f"/data-drift/statistical-reports/{session_id}",
+                    "feature_analysis": f"/data-drift/feature-analysis/{session_id}"
+                }
+            }
+        }
+        
+        # Add model drift endpoints if model is available
+        if session_data["has_model"]:
+            response_data["analysis_endpoints"]["model_drift"] = {
+                "performance_comparison": f"/model-drift/performance-comparison/{session_id}",
+                "degradation_metrics": f"/model-drift/degradation-metrics/{session_id}",
+                "statistical_significance": f"/model-drift/statistical-significance/{session_id}"
+            }
+            response_data["data"]["model_filename"] = session_data.get("model_filename", "")
+        
+        return {
+            "status": "success",
+            **response_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get session info: {str(e)}")
 
-def get_enhanced_drift_status(result) -> bool:
-    """Helper function to extract drift detection status from enhanced analysis results"""
-    if not result:
-        return False
-        
-    # Handle enhanced analysis results
-    if hasattr(result, 'success'):
-        if not result.success:
-            return False
-        
-        if hasattr(result, 'analysis_results') and result.analysis_results:
-            if hasattr(result.analysis_results, 'drift_metrics') and result.analysis_results.drift_metrics:
-                return result.analysis_results.drift_metrics.drift_detected
+@router.delete("/session/{session_id}")
+async def delete_unified_session(session_id: str):
+    """
+    Delete a unified session and its associated data
     
-    # Handle dictionary results
-    if isinstance(result, dict):
-        return get_drift_status(result)
+    Args:
+        session_id: Session identifier
         
-    return False
+    Returns:
+        Confirmation of deletion
+    """
+    try:
+        session_manager = get_session_manager()
+        if session_manager.delete_session(session_id):
+            return {
+                "status": "success",
+                "message": f"Session {session_id} deleted successfully"
+            }
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
+
+@router.get("/sessions")
+async def list_unified_sessions():
+    """
+    List all active unified sessions
+    
+    Returns:
+        List of active sessions with their information
+    """
+    try:
+        session_manager = get_session_manager()
+        sessions = session_manager.list_sessions()
+        
+        return {
+            "status": "success",
+            "total_sessions": len(sessions),
+            "sessions": sessions
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {str(e)}")
 
 @router.get("/health")
 async def health_check():
@@ -349,8 +263,8 @@ async def health_check():
         "version": "2.0.0",
         "endpoints": {
             "upload": "/api/v1/upload",
-            "analyze": "/api/v1/analyze",
-            "data_drift": "/api/v1/data-drift/upload", 
-            "model_drift": "/api/v1/model-drift/upload"
+            "session_info": "/api/v1/session/{session_id}/info",
+            "delete_session": "/api/v1/session/{session_id}",
+            "list_sessions": "/api/v1/sessions"
         }
     }

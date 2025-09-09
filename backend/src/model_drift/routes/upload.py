@@ -4,6 +4,9 @@ import numpy as np
 import math
 from typing import Optional, List
 import json
+import io
+import pickle
+import joblib
 from ..services.model_service import run_model_drift
 from ..services.enhanced_model_service import enhanced_model_service
 from ..services.analysis.performance_comparison_service import performance_comparison_service
@@ -11,6 +14,7 @@ from ..services.analysis.degradation_metrics_service import degradation_metrics_
 from ..services.analysis.statistical_significance_service import statistical_significance_service
 from ..models.analysis_config import AnalysisConfiguration, ModelType, DriftThresholds
 from pydantic import ValidationError, BaseModel
+from ...shared.session_manager import get_session_manager
 
 def clean_float_values(obj):
     """Recursively clean non-finite float values from nested data structures"""
@@ -419,6 +423,152 @@ async def statistical_significance_analysis(
         
         return serialize_response(result)
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Statistical significance analysis failed: {str(e)}")
+
+# Session-based endpoints for Model Drift Analysis
+
+@router.get("/performance-comparison/{session_id}")
+async def performance_comparison_with_session(session_id: str):
+    """
+    Performance Comparison Analysis using session data
+    
+    Args:
+        session_id: Session identifier containing data and model
+        
+    Returns:
+        Comprehensive performance comparison between reference and current model performance
+    """
+    try:
+        session_manager = get_session_manager()
+        if not session_manager.session_exists(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = session_manager.get_session(session_id)
+        
+        # Validate session has model
+        if not session_data["has_model"]:
+            raise HTTPException(status_code=400, detail="Session does not contain a model file")
+        
+        # Get data and model from session
+        reference_df = session_data["reference_df"]
+        current_df = session_data["current_df"]
+        model_data = session_data["model_file_content"]
+        
+        # Load model from bytes
+        try:
+            model = pickle.loads(model_data)
+        except:
+            try:
+                model = joblib.loads(model_data)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to load model: {str(e)}")
+        
+        # Run performance comparison analysis
+        result = await performance_comparison_service.analyze_performance_comparison(
+            reference_df, current_df, model
+        )
+        
+        return serialize_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Performance comparison analysis failed: {str(e)}")
+
+@router.get("/degradation-metrics/{session_id}")
+async def degradation_metrics_with_session(session_id: str):
+    """
+    Degradation Metrics Analysis using session data
+    
+    Args:
+        session_id: Session identifier containing data and model
+        
+    Returns:
+        Comprehensive degradation metrics analysis
+    """
+    try:
+        session_manager = get_session_manager()
+        if not session_manager.session_exists(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = session_manager.get_session(session_id)
+        
+        # Validate session has model
+        if not session_data["has_model"]:
+            raise HTTPException(status_code=400, detail="Session does not contain a model file")
+        
+        # Get data and model from session
+        reference_df = session_data["reference_df"]
+        current_df = session_data["current_df"]
+        model_data = session_data["model_file_content"]
+        
+        # Load model from bytes
+        try:
+            model = pickle.loads(model_data)
+        except:
+            try:
+                model = joblib.loads(model_data)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to load model: {str(e)}")
+        
+        # Run degradation metrics analysis
+        result = await degradation_metrics_service.analyze_degradation_metrics(
+            reference_df, current_df, model
+        )
+        
+        return serialize_response(result)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Degradation metrics analysis failed: {str(e)}")
+
+@router.get("/statistical-significance/{session_id}")
+async def statistical_significance_with_session(session_id: str):
+    """
+    Statistical Significance Analysis using session data
+    
+    Args:
+        session_id: Session identifier containing data and model
+        
+    Returns:
+        Statistical significance analysis results
+    """
+    try:
+        session_manager = get_session_manager()
+        if not session_manager.session_exists(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        session_data = session_manager.get_session(session_id)
+        
+        # Validate session has model
+        if not session_data["has_model"]:
+            raise HTTPException(status_code=400, detail="Session does not contain a model file")
+        
+        # Get data and model from session
+        reference_df = session_data["reference_df"]
+        current_df = session_data["current_df"]
+        model_data = session_data["model_file_content"]
+        
+        # Load model from bytes
+        try:
+            model = pickle.loads(model_data)
+        except:
+            try:
+                model = joblib.loads(model_data)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to load model: {str(e)}")
+        
+        # Run statistical significance analysis
+        result = await statistical_significance_service.analyze_statistical_significance(
+            reference_df, current_df, model
+        )
+        
+        return serialize_response(result)
+        
     except HTTPException:
         raise
     except Exception as e:

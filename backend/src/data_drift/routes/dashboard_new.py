@@ -4,8 +4,34 @@ import pandas as pd
 import numpy as np
 from scipy.stats import ks_2samp, chi2_contingency, entropy
 from .upload import get_session_storage
+from ...shared.session_manager import get_session_manager
 
 router = APIRouter(prefix="/data-drift", tags=["Data Drift - Dashboard"])
+
+def get_session_data(session_id: str):
+    """Get session data with fallback logic: unified session first, then individual storage"""
+    # Try unified session manager first (priority)
+    unified_session_manager = get_session_manager()
+    if unified_session_manager.session_exists(session_id):
+        return unified_session_manager.get_data_drift_format(session_id)
+    
+    # Fallback to individual Data Drift session storage
+    individual_storage = get_session_storage()
+    if session_id in individual_storage:
+        # Convert individual storage format to expected format
+        individual_data = individual_storage[session_id]
+        return {
+            "reference_df": individual_data["reference"],
+            "current_df": individual_data["current"],
+            "reference_filename": individual_data.get("reference_filename", ""),
+            "current_filename": individual_data.get("current_filename", ""),
+            "reference_shape": individual_data.get("reference_shape", (0, 0)),
+            "current_shape": individual_data.get("current_shape", (0, 0)),
+            "common_columns": list(set(individual_data["reference"].columns) & set(individual_data["current"].columns)),
+            "upload_timestamp": individual_data.get("upload_timestamp", "")
+        }
+    
+    return None
 
 def compute_kl_divergence(p, q):
     """Compute KL divergence between two probability distributions"""
@@ -26,32 +52,31 @@ async def get_drift_dashboard(session_id: str):
         Dashboard analysis results
     """
     try:
-        # Get session data
-        session_storage = get_session_storage()
-        if session_id not in session_storage:
+        # Get session data with fallback logic
+        session_data = get_session_data(session_id)
+        if not session_data:
             raise HTTPException(status_code=404, detail="Session not found. Please upload data first.")
         
-        session_data = session_storage[session_id]
-        ref_df = session_data["reference"]
-        curr_df = session_data["current"]
+        reference_df = session_data["reference_df"]
+        current_df = session_data["current_df"]
 
         drifted_features = []
         feature_analysis_list = []
 
         # Define bins for numeric columns (using same bins for ref and curr)
         numeric_bins = {
-            col: np.histogram_bin_edges(ref_df[col].dropna(), bins='auto')
-            for col in ref_df.select_dtypes(include=["int64", "float64"]).columns
+            col: np.histogram_bin_edges(reference_df[col].dropna(), bins='auto')
+            for col in reference_df.select_dtypes(include=["int64", "float64"]).columns
         }
 
-        for col in ref_df.columns:
-            if col not in curr_df.columns:
+        for col in reference_df.columns:
+            if col not in current_df.columns:
                 continue  # Skip columns that don't exist in current dataset
                 
-            if ref_df[col].dtype in ["int64", "float64"]:
+            if reference_df[col].dtype in ["int64", "float64"]:
                 # KS test for drift
-                ref_vals = ref_df[col].dropna()
-                curr_vals = curr_df[col].dropna()
+                ref_vals = reference_df[col].dropna()
+                curr_vals = current_df[col].dropna()
                 
                 if len(ref_vals) == 0 or len(curr_vals) == 0:
                     continue
@@ -89,13 +114,13 @@ async def get_drift_dashboard(session_id: str):
                 # Categorical variables
                 try:
                     # Create contingency table
-                    crosstab = pd.crosstab(ref_df[col], curr_df[col])
+                    crosstab = pd.crosstab(reference_df[col], current_df[col])
                     chi2, p_value, _, _ = chi2_contingency(crosstab)
                     drift_status = "high" if p_value < 0.01 else "medium" if p_value < 0.05 else "low"
                     drift_score = chi2 / 10
 
-                    distribution_ref = ref_df[col].value_counts().to_dict()
-                    distribution_current = curr_df[col].value_counts().to_dict()
+                    distribution_ref = reference_df[col].value_counts().to_dict()
+                    distribution_current = current_df[col].value_counts().to_dict()
 
                     feature_analysis_list.append({
                         "feature": col,
@@ -132,7 +157,7 @@ async def get_drift_dashboard(session_id: str):
             "The model performance may be impacted and retraining should be considered within the next quarter."
         )
 
-        data_quality_score = ref_df.notnull().mean().mean()
+        data_quality_score = reference_df.notnull().mean().mean()
 
         return {
             "status": "success",

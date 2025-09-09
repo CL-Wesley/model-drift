@@ -4,11 +4,37 @@ from fastapi import APIRouter, HTTPException
 from scipy.stats import ks_2samp, chi2_contingency, entropy
 from datetime import datetime
 from .upload import get_session_storage
+from ...shared.session_manager import get_session_manager
 
 router = APIRouter(
     prefix="/data-drift",
     tags=["Data Drift - Feature Analysis"]
 )
+
+def get_session_data(session_id: str):
+    """Get session data with fallback logic: unified session first, then individual storage"""
+    # Try unified session manager first (priority)
+    unified_session_manager = get_session_manager()
+    if unified_session_manager.session_exists(session_id):
+        return unified_session_manager.get_data_drift_format(session_id)
+    
+    # Fallback to individual Data Drift session storage
+    individual_storage = get_session_storage()
+    if session_id in individual_storage:
+        # Convert individual storage format to expected format
+        individual_data = individual_storage[session_id]
+        return {
+            "reference_df": individual_data["reference"],
+            "current_df": individual_data["current"],
+            "reference_filename": individual_data.get("reference_filename", ""),
+            "current_filename": individual_data.get("current_filename", ""),
+            "reference_shape": individual_data.get("reference_shape", (0, 0)),
+            "current_shape": individual_data.get("current_shape", (0, 0)),
+            "common_columns": list(set(individual_data["reference"].columns) & set(individual_data["current"].columns)),
+            "upload_timestamp": individual_data.get("upload_timestamp", "")
+        }
+    
+    return None
 
 def calc_change(ref, curr):
     if ref == 0:
@@ -49,27 +75,30 @@ async def get_feature_analysis(session_id: str):
         Feature analysis results
     """
     try:
-        # Get session data
-        session_storage = get_session_storage()
-        if session_id not in session_storage:
+        # Use the new session data retrieval with fallback logic
+        session_data = get_session_data(session_id)
+        if session_data is None:
             raise HTTPException(status_code=404, detail="Session not found. Please upload data first.")
         
-        session_data = session_storage[session_id]
-        ref_df = session_data["reference"]
-        curr_df = session_data["current"]
+        # Extract DataFrames from session data
+        reference_df = session_data["reference_df"]
+        curr_df = session_data["current_df"]
 
         feature_analysis_list = []
 
         # Only analyze common columns
-        common_columns = list(set(ref_df.columns) & set(curr_df.columns))
+        common_columns = session_data.get("common_columns", 
+            list(set(reference_df.columns) & set(curr_df.columns))
+        )
         
         if not common_columns:
             raise HTTPException(status_code=400, detail="No common columns found between datasets")
 
+        # Rest of your analysis code remains the same...
         for col in common_columns:
-            dtype = "numerical" if ref_df[col].dtype in ["int64", "float64"] else "categorical"
+            dtype = "numerical" if reference_df[col].dtype in ["int64", "float64"] else "categorical"
 
-            missing_ref = int(ref_df[col].isna().sum())
+            missing_ref = int(reference_df[col].isna().sum())
             missing_curr = int(curr_df[col].isna().sum())
 
             drift_score = 0.0
@@ -82,7 +111,7 @@ async def get_feature_analysis(session_id: str):
 
             if dtype == "numerical":
                 try:
-                    ref_vals = ref_df[col].dropna()
+                    ref_vals = reference_df[col].dropna()
                     curr_vals = curr_df[col].dropna()
 
                     if len(ref_vals) == 0 or len(curr_vals) == 0:
@@ -174,11 +203,11 @@ async def get_feature_analysis(session_id: str):
             else:
                 # Categorical features
                 try:
-                    crosstab = pd.crosstab(ref_df[col], curr_df[col])
+                    crosstab = pd.crosstab(reference_df[col], curr_df[col])
                     chi2, p_value, _, _ = chi2_contingency(crosstab)
                     drift_score = float(chi2 / 10)
                     distribution_ref = {
-                        "counts": {str(k): int(v) for k, v in ref_df[col].value_counts().to_dict().items()}
+                        "counts": {str(k): int(v) for k, v in reference_df[col].value_counts().to_dict().items()}
                     }
                     distribution_curr = {
                         "counts": {str(k): int(v) for k, v in curr_df[col].value_counts().to_dict().items()}

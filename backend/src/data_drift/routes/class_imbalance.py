@@ -7,11 +7,37 @@ import json
 import tempfile
 import os
 from .upload import get_session_storage
+from ...shared.session_manager import get_session_manager
 
 router = APIRouter(
     prefix="/data-drift/class-imbalance",
     tags=["Data Drift - Class Imbalance"]
 )
+
+def get_session_data(session_id: str):
+    """Get session data with fallback logic: unified session first, then individual storage"""
+    # Try unified session manager first (priority)
+    unified_session_manager = get_session_manager()
+    if unified_session_manager.session_exists(session_id):
+        return unified_session_manager.get_data_drift_format(session_id)
+    
+    # Fallback to individual Data Drift session storage
+    individual_storage = get_session_storage()
+    if session_id in individual_storage:
+        # Convert individual storage format to expected format
+        individual_data = individual_storage[session_id]
+        return {
+            "reference_df": individual_data["reference"],
+            "current_df": individual_data["current"],
+            "reference_filename": individual_data.get("reference_filename", ""),
+            "current_filename": individual_data.get("current_filename", ""),
+            "reference_shape": individual_data.get("reference_shape", (0, 0)),
+            "current_shape": individual_data.get("current_shape", (0, 0)),
+            "common_columns": list(set(individual_data["reference"].columns) & set(individual_data["current"].columns)),
+            "upload_timestamp": individual_data.get("upload_timestamp", "")
+        }
+    
+    return None
 
 def gini(counts):
     array = np.array(list(counts.values()))
@@ -48,27 +74,26 @@ async def get_class_imbalance_analysis(session_id: str):
         Class imbalance analysis results
     """
     try:
-        # Get session data
-        session_storage = get_session_storage()
-        if session_id not in session_storage:
+        # Get session data with fallback logic
+        session_data = get_session_data(session_id)
+        if not session_data:
             raise HTTPException(status_code=404, detail="Session not found. Please upload data first.")
         
-        session_data = session_storage[session_id]
-        ref_df = session_data["reference"]
-        curr_df = session_data["current"]
+        reference_df = session_data["reference_df"]
+        current_df = session_data["current_df"]
 
         # Use the last column as target column (assumes target is last column)
-        target_col = ref_df.columns[-1]
+        target_col = reference_df.columns[-1]
 
-        if target_col not in curr_df.columns:
+        if target_col not in current_df.columns:
             raise HTTPException(status_code=400, detail=f"Target column '{target_col}' not found in current dataset")
 
         # Class counts
-        class_counts_ref = ref_df[target_col].value_counts().to_dict()
-        class_counts_curr = curr_df[target_col].value_counts().to_dict()
+        class_counts_ref = reference_df[target_col].value_counts().to_dict()
+        class_counts_curr = current_df[target_col].value_counts().to_dict()
 
-        total_ref = int(ref_df.shape[0])
-        total_curr = int(curr_df.shape[0])
+        total_ref = int(reference_df.shape[0])
+        total_curr = int(current_df.shape[0])
 
         class_percent_ref = {k: round(v / total_ref * 100, 2) for k, v in class_counts_ref.items()}
         class_percent_curr = {k: round(v / total_curr * 100, 2) for k, v in class_counts_curr.items()}
@@ -118,14 +143,14 @@ async def get_class_imbalance_analysis(session_id: str):
 
         # KS test for numeric columns (excluding target)
         ks_results = {}
-        numeric_cols = ref_df.select_dtypes(include=np.number).columns.tolist()
+        numeric_cols = reference_df.select_dtypes(include=np.number).columns.tolist()
         if target_col in numeric_cols:
             numeric_cols.remove(target_col)
         
         for col in numeric_cols:
-            if col in curr_df.columns:
+            if col in current_df.columns:
                 try:
-                    ks_stat, ks_p = ks_2samp(ref_df[col].dropna(), curr_df[col].dropna())
+                    ks_stat, ks_p = ks_2samp(reference_df[col].dropna(), current_df[col].dropna())
                     ks_results[col] = {
                         "ks_statistic": float(ks_stat),
                         "p_value": float(ks_p),

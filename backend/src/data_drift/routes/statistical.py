@@ -4,11 +4,37 @@ from fastapi import APIRouter, HTTPException
 from scipy.stats import ks_2samp, entropy, chi2_contingency
 from datetime import datetime
 from .upload import get_session_storage
+from ...shared.session_manager import get_session_manager
 
 router = APIRouter(
     prefix="/data-drift",
     tags=["Data Drift - Statistical Reports"]
 )
+
+def get_session_data(session_id: str):
+    """Get session data with fallback logic: unified session first, then individual storage"""
+    # Try unified session manager first (priority)
+    unified_session_manager = get_session_manager()
+    if unified_session_manager.session_exists(session_id):
+        return unified_session_manager.get_data_drift_format(session_id)
+    
+    # Fallback to individual Data Drift session storage
+    individual_storage = get_session_storage()
+    if session_id in individual_storage:
+        # Convert individual storage format to expected format
+        individual_data = individual_storage[session_id]
+        return {
+            "reference_df": individual_data["reference"],
+            "current_df": individual_data["current"],
+            "reference_filename": individual_data.get("reference_filename", ""),
+            "current_filename": individual_data.get("current_filename", ""),
+            "reference_shape": individual_data.get("reference_shape", (0, 0)),
+            "current_shape": individual_data.get("current_shape", (0, 0)),
+            "common_columns": list(set(individual_data["reference"].columns) & set(individual_data["current"].columns)),
+            "upload_timestamp": individual_data.get("upload_timestamp", "")
+        }
+    
+    return None
 
 def psi(ref, curr, bins=10):
     """Population Stability Index (simplified)"""
@@ -37,14 +63,13 @@ async def get_statistical_reports(session_id: str):
         Statistical reports analysis results
     """
     try:
-        # Get session data
-        session_storage = get_session_storage()
-        if session_id not in session_storage:
+        # Get session data with fallback logic
+        session_data = get_session_data(session_id)
+        if not session_data:
             raise HTTPException(status_code=404, detail="Session not found. Please upload data first.")
         
-        session_data = session_storage[session_id]
-        ref_df = session_data["reference"]
-        curr_df = session_data["current"]
+        reference_df = session_data["reference_df"]
+        current_df = session_data["current_df"]
 
         feature_analysis_list = []
         ks_tests = []
@@ -52,15 +77,15 @@ async def get_statistical_reports(session_id: str):
         total_drift_score = 0
 
         # Only analyze common columns
-        common_columns = list(set(ref_df.columns) & set(curr_df.columns))
+        common_columns = list(set(reference_df.columns) & set(current_df.columns))
         
         if not common_columns:
             raise HTTPException(status_code=400, detail="No common columns found between datasets")
 
         for col in common_columns:
-            dtype = "numerical" if ref_df[col].dtype in ["int64", "float64"] else "categorical"
-            missing_ref = int(ref_df[col].isna().sum())
-            missing_curr = int(curr_df[col].isna().sum())
+            dtype = "numerical" if reference_df[col].dtype in ["int64", "float64"] else "categorical"
+            missing_ref = int(reference_df[col].isna().sum())
+            missing_curr = int(current_df[col].isna().sum())
             drift_score = 0.0
             kl_divergence = 0.0
             psi_value = 0.0
@@ -69,8 +94,8 @@ async def get_statistical_reports(session_id: str):
 
             if dtype == "numerical":
                 try:
-                    ref_vals = ref_df[col].dropna()
-                    curr_vals = curr_df[col].dropna()
+                    ref_vals = reference_df[col].dropna()
+                    curr_vals = current_df[col].dropna()
                     
                     if len(ref_vals) == 0 or len(curr_vals) == 0:
                         continue
@@ -127,15 +152,15 @@ async def get_statistical_reports(session_id: str):
             else:
                 # Categorical features
                 try:
-                    ref_counts = ref_df[col].value_counts(normalize=True).to_dict()
-                    curr_counts = curr_df[col].value_counts(normalize=True).to_dict()
+                    ref_counts = reference_df[col].value_counts(normalize=True).to_dict()
+                    curr_counts = current_df[col].value_counts(normalize=True).to_dict()
                     all_keys = set(ref_counts.keys()).union(curr_counts.keys())
                     drift_score = sum(abs(ref_counts.get(k,0) - curr_counts.get(k,0)) for k in all_keys)
                     
                     # Chi-Square test - safer implementation
                     categories = list(all_keys)
-                    ref_vals = [ref_df[col].value_counts().get(k,0) for k in categories]
-                    curr_vals = [curr_df[col].value_counts().get(k,0) for k in categories]
+                    ref_vals = [reference_df[col].value_counts().get(k,0) for k in categories]
+                    curr_vals = [current_df[col].value_counts().get(k,0) for k in categories]
                     
                     if sum(ref_vals) > 0 and sum(curr_vals) > 0 and len(categories) > 1:
                         chi2_stat, chi_p, _, _ = chi2_contingency([ref_vals, curr_vals])
@@ -174,7 +199,7 @@ async def get_statistical_reports(session_id: str):
         overall_status = "low" if overall_drift_score < 0.5 else "medium" if overall_drift_score < 1.5 else "high"
         
         # Safer data quality score calculation
-        total_cells = curr_df.shape[0] * curr_df.shape[1]
+        total_cells = current_df.shape[0] * current_df.shape[1]
         missing_cells = sum(f.get("missing_values_current", 0) for f in feature_analysis_list)
         data_quality_score = 1 - (missing_cells / max(total_cells, 1))
 
@@ -190,13 +215,13 @@ async def get_statistical_reports(session_id: str):
 
         # Correlation analysis - safer implementation
         correlation_analysis = []
-        numerical_cols = [c for c in common_columns if ref_df[c].dtype in ["int64","float64"] and curr_df[c].dtype in ["int64","float64"]]
+        numerical_cols = [c for c in common_columns if reference_df[c].dtype in ["int64","float64"] and current_df[c].dtype in ["int64","float64"]]
         for i in range(len(numerical_cols)):
             for j in range(i+1, min(len(numerical_cols), i+21)):  # Limit to prevent too many correlations
                 f1, f2 = numerical_cols[i], numerical_cols[j]
                 try:
-                    ref_corr = ref_df[f1].corr(ref_df[f2])
-                    curr_corr = curr_df[f1].corr(curr_df[f2])
+                    ref_corr = reference_df[f1].corr(reference_df[f2])
+                    curr_corr = current_df[f1].corr(current_df[f2])
                     if pd.notna(ref_corr) and pd.notna(curr_corr):
                         correlation_analysis.append({
                             "feature1": f1,
