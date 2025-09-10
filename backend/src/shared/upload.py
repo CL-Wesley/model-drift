@@ -133,9 +133,9 @@ async def unified_upload(
         # Add model drift endpoints if model was provided
         if model_file:
             response_data["analysis_endpoints"]["model_drift"] = {
-                "performance_comparison": f"/model-drift/performance-comparison/{created_session_id}",
-                "degradation_metrics": f"/model-drift/degradation-metrics/{created_session_id}",
-                "statistical_significance": f"/model-drift/statistical-significance/{created_session_id}"
+                "performance_comparison": f"/model-drift/session/performance-comparison/{created_session_id}",
+                "degradation_metrics": f"/model-drift/session/degradation-metrics/{created_session_id}",
+                "statistical_significance": f"/model-drift/session/statistical-significance/{created_session_id}"
             }
         
         return {
@@ -191,9 +191,9 @@ async def get_unified_session_info(session_id: str):
         # Add model drift endpoints if model is available
         if session_data["has_model"]:
             response_data["analysis_endpoints"]["model_drift"] = {
-                "performance_comparison": f"/model-drift/performance-comparison/{session_id}",
-                "degradation_metrics": f"/model-drift/degradation-metrics/{session_id}",
-                "statistical_significance": f"/model-drift/statistical-significance/{session_id}"
+                "performance_comparison": f"/model-drift/session/performance-comparison/{session_id}",
+                "degradation_metrics": f"/model-drift/session/degradation-metrics/{session_id}",
+                "statistical_significance": f"/model-drift/session/statistical-significance/{session_id}"
             }
             response_data["data"]["model_filename"] = session_data.get("model_filename", "")
         

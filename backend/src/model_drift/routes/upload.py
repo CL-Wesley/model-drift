@@ -7,6 +7,7 @@ import json
 import io
 import pickle
 import joblib
+from datetime import datetime
 from ..services.model_service import run_model_drift
 from ..services.enhanced_model_service import enhanced_model_service
 from ..services.analysis.performance_comparison_service import performance_comparison_service
@@ -15,6 +16,62 @@ from ..services.analysis.statistical_significance_service import statistical_sig
 from ..models.analysis_config import AnalysisConfiguration, ModelType, DriftThresholds
 from pydantic import ValidationError, BaseModel
 from ...shared.session_manager import get_session_manager
+
+# Session-to-UploadFile Adapter Classes
+class SessionUploadFile:
+    """Adapter class to convert session data back to UploadFile-like object"""
+    def __init__(self, content: bytes, filename: str, content_type: str = "text/csv"):
+        self.content = content
+        self.filename = filename
+        self.content_type = content_type
+        self._bytes_io = io.BytesIO(content)
+    
+    async def read(self) -> bytes:
+        self._bytes_io.seek(0)
+        return self._bytes_io.read()
+    
+    def seek(self, offset: int, whence: int = 0):
+        return self._bytes_io.seek(offset, whence)
+    
+    def tell(self) -> int:
+        return self._bytes_io.tell()
+
+def create_upload_files_from_session(session_id: str):
+    """Convert session data back to UploadFile-like objects for existing services"""
+    session_manager = get_session_manager()
+    if not session_manager.session_exists(session_id):
+        return None, None, None
+    
+    session_data = session_manager.get_model_drift_format(session_id)
+    if not session_data:
+        return None, None, None
+    
+    # Convert DataFrames back to CSV bytes
+    reference_csv = session_data["reference_df"].to_csv(index=False).encode('utf-8')
+    current_csv = session_data["current_df"].to_csv(index=False).encode('utf-8')
+    
+    # Create UploadFile-like objects
+    reference_file = SessionUploadFile(
+        content=reference_csv, 
+        filename=session_data["reference_filename"],
+        content_type="text/csv"
+    )
+    
+    current_file = SessionUploadFile(
+        content=current_csv,
+        filename=session_data["current_filename"], 
+        content_type="text/csv"
+    )
+    
+    model_file = None
+    if session_data["model_file_content"]:
+        model_file = SessionUploadFile(
+            content=session_data["model_file_content"],
+            filename=session_data["model_filename"],
+            content_type="application/octet-stream"
+        )
+    
+    return reference_file, current_file, model_file, session_data.get("config")
 
 def clean_float_values(obj):
     """Recursively clean non-finite float values from nested data structures"""
@@ -428,47 +485,304 @@ async def statistical_significance_analysis(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Statistical significance analysis failed: {str(e)}")
 
-# Session-based endpoints for Model Drift Analysis
+# # Session-based endpoints for Model Drift Analysis
 
-@router.get("/performance-comparison/{session_id}")
-async def performance_comparison_with_session(session_id: str):
-    """
-    Performance Comparison Analysis using session data
+# @router.get("/performance-comparison/{session_id}")
+# async def performance_comparison_with_session(session_id: str):
+#     """
+#     Performance Comparison Analysis using session data
     
-    Args:
-        session_id: Session identifier containing data and model
+#     Args:
+#         session_id: Session identifier containing data and model
         
-    Returns:
-        Comprehensive performance comparison between reference and current model performance
-    """
+#     Returns:
+#         Comprehensive performance comparison between reference and current model performance
+#     """
+#     try:
+#         session_manager = get_session_manager()
+#         if not session_manager.session_exists(session_id):
+#             raise HTTPException(status_code=404, detail="Session not found")
+        
+#         # Get session data in Model Drift format (with lazy processing)
+#         session_data = session_manager.get_model_drift_format(session_id)
+#         if not session_data:
+#             raise HTTPException(status_code=400, detail="Session does not contain a model file")
+        
+#         # Get data and model from session
+#         reference_df = session_data["reference_df"]
+#         current_df = session_data["current_df"]
+#         model_data = session_data["model_file_content"]
+        
+#         # Load model from bytes (lazy loading)
+#         try:
+#             if session_data["model_filename"].lower().endswith(('.joblib', '.pkl.joblib')):
+#                 model = joblib.load(io.BytesIO(model_data))
+#             else:  # .pkl, .pickle
+#                 model = pickle.load(io.BytesIO(model_data))
+#         except Exception as e:
+#             raise HTTPException(status_code=400, detail=f"Failed to load model: {str(e)}")
+        
+#         # Simple performance comparison analysis using session data
+#         try:
+#             # Basic model validation
+#             from sklearn.base import is_classifier, is_regressor
+            
+#             # Determine model type
+#             is_classification = is_classifier(model)
+#             is_regression = is_regressor(model)
+            
+#             if not (is_classification or is_regression):
+#                 raise HTTPException(status_code=400, detail="Model type could not be determined")
+            
+#             # Make predictions on both datasets
+#             try:
+#                 reference_predictions = model.predict(reference_df.select_dtypes(include=[np.number]))
+#                 current_predictions = model.predict(current_df.select_dtypes(include=[np.number]))
+#             except Exception as e:
+#                 raise HTTPException(status_code=400, detail=f"Failed to make predictions: {str(e)}")
+            
+#             # Basic performance analysis
+#             result = {
+#                 "analysis_type": "performance_comparison",
+#                 "model_type": "classification" if is_classification else "regression", 
+#                 "data_info": {
+#                     "reference_shape": reference_df.shape,
+#                     "current_shape": current_df.shape,
+#                     "reference_predictions_shape": reference_predictions.shape,
+#                     "current_predictions_shape": current_predictions.shape
+#                 },
+#                 "analysis_timestamp": datetime.utcnow().isoformat(),
+#                 "session_based": True,
+#                 "message": "Basic performance comparison completed using session data"
+#             }
+            
+#             return serialize_response(result)
+            
+#         except Exception as analysis_error:
+#             raise HTTPException(status_code=500, detail=f"Analysis failed: {str(analysis_error)}")
+        
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Performance comparison analysis failed: {str(e)}")
+
+# @router.get("/degradation-metrics/{session_id}")
+# async def degradation_metrics_with_session(session_id: str):
+#     """
+#     Degradation Metrics Analysis using session data
+    
+#     Args:
+#         session_id: Session identifier containing data and model
+        
+#     Returns:
+#         Comprehensive degradation metrics analysis
+#     """
+#     try:
+#         session_manager = get_session_manager()
+#         if not session_manager.session_exists(session_id):
+#             raise HTTPException(status_code=404, detail="Session not found")
+        
+#         # Get session data in Model Drift format (with lazy processing)
+#         session_data = session_manager.get_model_drift_format(session_id)
+#         if not session_data:
+#             raise HTTPException(status_code=400, detail="Session does not contain a model file")
+        
+#         # Get data and model from session
+#         reference_df = session_data["reference_df"]
+#         current_df = session_data["current_df"]
+#         model_data = session_data["model_file_content"]
+        
+#         # Load model from bytes (lazy loading)
+#         try:
+#             if session_data["model_filename"].lower().endswith(('.joblib', '.pkl.joblib')):
+#                 model = joblib.load(io.BytesIO(model_data))
+#             else:  # .pkl, .pickle
+#                 model = pickle.load(io.BytesIO(model_data))
+#         except Exception as e:
+#             raise HTTPException(status_code=400, detail=f"Failed to load model: {str(e)}")
+        
+#         # Simple degradation metrics analysis using session data
+#         try:
+#             # Basic model validation
+#             from sklearn.base import is_classifier, is_regressor
+            
+#             # Determine model type
+#             is_classification = is_classifier(model)
+#             is_regression = is_regressor(model)
+            
+#             if not (is_classification or is_regression):
+#                 raise HTTPException(status_code=400, detail="Model type could not be determined")
+            
+#             # Make predictions on both datasets
+#             try:
+#                 reference_predictions = model.predict(reference_df.select_dtypes(include=[np.number]))
+#                 current_predictions = model.predict(current_df.select_dtypes(include=[np.number]))
+#             except Exception as e:
+#                 raise HTTPException(status_code=400, detail=f"Failed to make predictions: {str(e)}")
+            
+#             # Basic degradation analysis
+#             result = {
+#                 "analysis_type": "degradation_metrics",
+#                 "model_type": "classification" if is_classification else "regression", 
+#                 "data_info": {
+#                     "reference_shape": reference_df.shape,
+#                     "current_shape": current_df.shape,
+#                     "reference_predictions_shape": reference_predictions.shape,
+#                     "current_predictions_shape": current_predictions.shape
+#                 },
+#                 "analysis_timestamp": datetime.utcnow().isoformat(),
+#                 "session_based": True,
+#                 "message": "Basic degradation metrics completed using session data"
+#             }
+            
+#             return serialize_response(result)
+            
+#         except Exception as analysis_error:
+#             raise HTTPException(status_code=500, detail=f"Analysis failed: {str(analysis_error)}")
+        
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Degradation metrics analysis failed: {str(e)}")
+
+# @router.get("/statistical-significance/{session_id}")
+# async def statistical_significance_with_session(session_id: str):
+#     """
+#     Statistical Significance Analysis using session data
+    
+#     Args:
+#         session_id: Session identifier containing data and model
+        
+#     Returns:
+#         Statistical significance analysis results
+#     """
+#     try:
+#         session_manager = get_session_manager()
+#         if not session_manager.session_exists(session_id):
+#             raise HTTPException(status_code=404, detail="Session not found")
+        
+#         # Get session data in Model Drift format (with lazy processing)
+#         session_data = session_manager.get_model_drift_format(session_id)
+#         if not session_data:
+#             raise HTTPException(status_code=400, detail="Session does not contain a model file")
+        
+#         # Get data and model from session
+#         reference_df = session_data["reference_df"]
+#         current_df = session_data["current_df"]
+#         model_data = session_data["model_file_content"]
+        
+#         # Load model from bytes (lazy loading)
+#         try:
+#             if session_data["model_filename"].lower().endswith(('.joblib', '.pkl.joblib')):
+#                 model = joblib.load(io.BytesIO(model_data))
+#             else:  # .pkl, .pickle
+#                 model = pickle.load(io.BytesIO(model_data))
+#         except Exception as e:
+#             raise HTTPException(status_code=400, detail=f"Failed to load model: {str(e)}")
+        
+#         # Simple statistical significance analysis using session data
+#         try:
+#             # Basic model validation
+#             from sklearn.base import is_classifier, is_regressor
+            
+#             # Determine model type
+#             is_classification = is_classifier(model)
+#             is_regression = is_regressor(model)
+            
+#             if not (is_classification or is_regression):
+#                 raise HTTPException(status_code=400, detail="Model type could not be determined")
+            
+#             # Make predictions on both datasets
+#             try:
+#                 reference_predictions = model.predict(reference_df.select_dtypes(include=[np.number]))
+#                 current_predictions = model.predict(current_df.select_dtypes(include=[np.number]))
+#             except Exception as e:
+#                 raise HTTPException(status_code=400, detail=f"Failed to make predictions: {str(e)}")
+            
+#             # Basic statistical significance analysis
+#             result = {
+#                 "analysis_type": "statistical_significance",
+#                 "model_type": "classification" if is_classification else "regression", 
+#                 "data_info": {
+#                     "reference_shape": reference_df.shape,
+#                     "current_shape": current_df.shape,
+#                     "reference_predictions_shape": reference_predictions.shape,
+#                     "current_predictions_shape": current_predictions.shape
+#                 },
+#                 "analysis_timestamp": datetime.utcnow().isoformat(),
+#                 "session_based": True,
+#                 "message": "Basic statistical significance analysis completed using session data"
+#             }
+            
+#             return serialize_response(result)
+            
+#         except Exception as analysis_error:
+#             raise HTTPException(status_code=500, detail=f"Analysis failed: {str(analysis_error)}")
+        
+#     except HTTPException:
+#         raise
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Statistical significance analysis failed: {str(e)}")
+
+# Clean Session-Based Model Drift Endpoints (Using Adapter Pattern)
+
+@router.get("/session/performance-comparison/{session_id}")
+async def session_performance_comparison(session_id: str):
+    """Performance Comparison Analysis using session data with adapter pattern"""
     try:
-        session_manager = get_session_manager()
-        if not session_manager.session_exists(session_id):
-            raise HTTPException(status_code=404, detail="Session not found")
+        # Convert session data to UploadFile-like objects
+        reference_file, current_file, model_file, config = create_upload_files_from_session(session_id)
         
-        session_data = session_manager.get_session(session_id)
+        if not reference_file or not current_file or not model_file:
+            raise HTTPException(status_code=404, detail="Session not found or does not contain required files")
         
-        # Validate session has model
-        if not session_data["has_model"]:
-            raise HTTPException(status_code=400, detail="Session does not contain a model file")
+        # Use configuration from session or default
+        if config:
+            # Handle statistical_test as either string or list (take first item if list)
+            statistical_test = config.get("statistical_test", "mcnemar")
+            if isinstance(statistical_test, list):
+                statistical_test = statistical_test[0] if statistical_test else "mcnemar"
+            
+            parsed_config = AnalysisConfig(
+                analysis_name=config.get("analysis_name", "Performance Comparison"),
+                description=config.get("description", "Session-based performance comparison analysis"),
+                model_type=config.get("model_type", "classification"),
+                selected_metrics=config.get("selected_metrics", ["accuracy", "precision", "recall"]),
+                statistical_test=statistical_test,
+                low_threshold=config.get("low_threshold", 0.05),
+                medium_threshold=config.get("medium_threshold", 0.15),
+                high_threshold=config.get("high_threshold", 0.25)
+            )
+        else:
+            parsed_config = AnalysisConfig(
+                analysis_name="Performance Comparison",
+                description="Session-based performance comparison analysis",
+                model_type="classification",
+                selected_metrics=["accuracy", "precision", "recall"],
+                statistical_test="mcnemar",
+                low_threshold=0.05,
+                medium_threshold=0.15,
+                high_threshold=0.25
+            )
         
-        # Get data and model from session
-        reference_df = session_data["reference_df"]
-        current_df = session_data["current_df"]
-        model_data = session_data["model_file_content"]
+        # Create full configuration for enhanced service
+        model_type_enum = ModelType(parsed_config.model_type.lower())
+        full_config = AnalysisConfiguration(
+            analysis_name=parsed_config.analysis_name,
+            description=parsed_config.description,
+            model_type=model_type_enum,
+            selected_metrics=parsed_config.selected_metrics,
+            statistical_test=parsed_config.statistical_test,
+            drift_thresholds=DriftThresholds(
+                low_threshold=parsed_config.low_threshold,
+                medium_threshold=parsed_config.medium_threshold,
+                high_threshold=parsed_config.high_threshold
+            )
+        )
         
-        # Load model from bytes
-        try:
-            model = pickle.loads(model_data)
-        except:
-            try:
-                model = joblib.loads(model_data)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Failed to load model: {str(e)}")
-        
-        # Run performance comparison analysis
-        result = await performance_comparison_service.analyze_performance_comparison(
-            reference_df, current_df, model
+        # Use existing enhanced model service (preserves all your complex logic)
+        result = await enhanced_model_service.run_performance_comparison_analysis(
+            reference_file, current_file, model_file, full_config
         )
         
         return serialize_response(result)
@@ -478,45 +792,63 @@ async def performance_comparison_with_session(session_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Performance comparison analysis failed: {str(e)}")
 
-@router.get("/degradation-metrics/{session_id}")
-async def degradation_metrics_with_session(session_id: str):
-    """
-    Degradation Metrics Analysis using session data
-    
-    Args:
-        session_id: Session identifier containing data and model
-        
-    Returns:
-        Comprehensive degradation metrics analysis
-    """
+@router.get("/session/degradation-metrics/{session_id}")
+async def session_degradation_metrics(session_id: str):
+    """Degradation Metrics Analysis using session data with adapter pattern"""
     try:
-        session_manager = get_session_manager()
-        if not session_manager.session_exists(session_id):
-            raise HTTPException(status_code=404, detail="Session not found")
+        # Convert session data to UploadFile-like objects
+        reference_file, current_file, model_file, config = create_upload_files_from_session(session_id)
         
-        session_data = session_manager.get_session(session_id)
+        if not reference_file or not current_file or not model_file:
+            raise HTTPException(status_code=404, detail="Session not found or does not contain required files")
         
-        # Validate session has model
-        if not session_data["has_model"]:
-            raise HTTPException(status_code=400, detail="Session does not contain a model file")
+        # Use configuration from session or default
+        if config:
+            # Handle statistical_test as either string or list (take first item if list)
+            statistical_test = config.get("statistical_test", "mcnemar")
+            if isinstance(statistical_test, list):
+                statistical_test = statistical_test[0] if statistical_test else "mcnemar"
+            
+            parsed_config = AnalysisConfig(
+                analysis_name=config.get("analysis_name", "Degradation Metrics"),
+                description=config.get("description", "Session-based degradation metrics analysis"),
+                model_type=config.get("model_type", "classification"),
+                selected_metrics=config.get("selected_metrics", ["accuracy", "precision", "recall"]),
+                statistical_test=statistical_test,
+                low_threshold=config.get("low_threshold", 0.05),
+                medium_threshold=config.get("medium_threshold", 0.15),
+                high_threshold=config.get("high_threshold", 0.25)
+            )
+        else:
+            parsed_config = AnalysisConfig(
+                analysis_name="Degradation Metrics",
+                description="Session-based degradation metrics analysis",
+                model_type="classification",
+                selected_metrics=["accuracy", "precision", "recall"],
+                statistical_test="mcnemar",
+                low_threshold=0.05,
+                medium_threshold=0.15,
+                high_threshold=0.25
+            )
         
-        # Get data and model from session
-        reference_df = session_data["reference_df"]
-        current_df = session_data["current_df"]
-        model_data = session_data["model_file_content"]
+        # Create full configuration for enhanced service
+        model_type_enum = ModelType(parsed_config.model_type.lower())
+        full_config = AnalysisConfiguration(
+            analysis_name=parsed_config.analysis_name,
+            description=parsed_config.description,
+            model_type=model_type_enum,
+            selected_metrics=parsed_config.selected_metrics,
+            statistical_test=parsed_config.statistical_test,
+            drift_thresholds=DriftThresholds(
+                low_threshold=parsed_config.low_threshold,
+                medium_threshold=parsed_config.medium_threshold,
+                high_threshold=parsed_config.high_threshold
+            )
+        )
         
-        # Load model from bytes
-        try:
-            model = pickle.loads(model_data)
-        except:
-            try:
-                model = joblib.loads(model_data)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Failed to load model: {str(e)}")
-        
-        # Run degradation metrics analysis
-        result = await degradation_metrics_service.analyze_degradation_metrics(
-            reference_df, current_df, model
+        # Use existing enhanced model service (preserves all your complex logic)
+        result = await enhanced_model_service.run_degradation_metrics_analysis(
+            reference_file, current_file, model_file, full_config
         )
         
         return serialize_response(result)
@@ -526,45 +858,63 @@ async def degradation_metrics_with_session(session_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Degradation metrics analysis failed: {str(e)}")
 
-@router.get("/statistical-significance/{session_id}")
-async def statistical_significance_with_session(session_id: str):
-    """
-    Statistical Significance Analysis using session data
-    
-    Args:
-        session_id: Session identifier containing data and model
-        
-    Returns:
-        Statistical significance analysis results
-    """
+@router.get("/session/statistical-significance/{session_id}")
+async def session_statistical_significance(session_id: str):
+    """Statistical Significance Analysis using session data with adapter pattern"""
     try:
-        session_manager = get_session_manager()
-        if not session_manager.session_exists(session_id):
-            raise HTTPException(status_code=404, detail="Session not found")
+        # Convert session data to UploadFile-like objects
+        reference_file, current_file, model_file, config = create_upload_files_from_session(session_id)
         
-        session_data = session_manager.get_session(session_id)
+        if not reference_file or not current_file or not model_file:
+            raise HTTPException(status_code=404, detail="Session not found or does not contain required files")
         
-        # Validate session has model
-        if not session_data["has_model"]:
-            raise HTTPException(status_code=400, detail="Session does not contain a model file")
+        # Use configuration from session or default
+        if config:
+            # Handle statistical_test as either string or list (take first item if list)
+            statistical_test = config.get("statistical_test", "mcnemar")
+            if isinstance(statistical_test, list):
+                statistical_test = statistical_test[0] if statistical_test else "mcnemar"
+            
+            parsed_config = AnalysisConfig(
+                analysis_name=config.get("analysis_name", "Statistical Significance"),
+                description=config.get("description", "Session-based statistical significance analysis"),
+                model_type=config.get("model_type", "classification"),
+                selected_metrics=config.get("selected_metrics", ["accuracy", "precision", "recall"]),
+                statistical_test=statistical_test,
+                low_threshold=config.get("low_threshold", 0.05),
+                medium_threshold=config.get("medium_threshold", 0.15),
+                high_threshold=config.get("high_threshold", 0.25)
+            )
+        else:
+            parsed_config = AnalysisConfig(
+                analysis_name="Statistical Significance",
+                description="Session-based statistical significance analysis",
+                model_type="classification",
+                selected_metrics=["accuracy", "precision", "recall"],
+                statistical_test="mcnemar",
+                low_threshold=0.05,
+                medium_threshold=0.15,
+                high_threshold=0.25
+            )
         
-        # Get data and model from session
-        reference_df = session_data["reference_df"]
-        current_df = session_data["current_df"]
-        model_data = session_data["model_file_content"]
+        # Create full configuration for enhanced service
+        model_type_enum = ModelType(parsed_config.model_type.lower())
+        full_config = AnalysisConfiguration(
+            analysis_name=parsed_config.analysis_name,
+            description=parsed_config.description,
+            model_type=model_type_enum,
+            selected_metrics=parsed_config.selected_metrics,
+            statistical_test=parsed_config.statistical_test,
+            drift_thresholds=DriftThresholds(
+                low_threshold=parsed_config.low_threshold,
+                medium_threshold=parsed_config.medium_threshold,
+                high_threshold=parsed_config.high_threshold
+            )
+        )
         
-        # Load model from bytes
-        try:
-            model = pickle.loads(model_data)
-        except:
-            try:
-                model = joblib.loads(model_data)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=f"Failed to load model: {str(e)}")
-        
-        # Run statistical significance analysis
-        result = await statistical_significance_service.analyze_statistical_significance(
-            reference_df, current_df, model
+        # Use existing enhanced model service (preserves all your complex logic)
+        result = await enhanced_model_service.run_statistical_significance_analysis(
+            reference_file, current_file, model_file, full_config
         )
         
         return serialize_response(result)

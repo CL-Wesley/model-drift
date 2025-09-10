@@ -153,7 +153,7 @@ class SessionManager:
         
         Args:
             session_id: Session identifier
-            config: Optional configuration for Model Drift analysis
+            config: Optional configuration override (defaults to stored session config)
             
         Returns:
             Data in format expected by Model Drift endpoints (processed lazily)
@@ -166,6 +166,10 @@ class SessionManager:
         # Validate session has model
         if not session_data["has_model"]:
             return None
+        
+        # Use stored config if no override provided
+        if config is None:
+            config = session_data.get("config", {})
             
         # Return data in Model Drift expected format
         # Note: Actual model processing will happen lazily in Model Drift endpoints
