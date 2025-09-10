@@ -5,6 +5,7 @@ from scipy.stats import ks_2samp, chi2_contingency, entropy
 from datetime import datetime
 from .upload import get_session_storage
 from ...shared.session_manager import get_session_manager
+from ...shared.ai_explanation_service import ai_explanation_service
 
 router = APIRouter(
     prefix="/data-drift",
@@ -403,7 +404,7 @@ async def get_feature_analysis(session_id: str):
         insights = generate_feature_analysis_insights(feature_analysis_list, overall_drift_score)
 
         # Enhanced response with executive summary
-        return {
+        result = {
             "status": "success",
             "data": {
                 # Executive Summary
@@ -434,6 +435,28 @@ async def get_feature_analysis(session_id: str):
                 }
             }
         }
+
+        # Generate AI explanation for the feature analysis
+        try:
+            ai_explanation = ai_explanation_service.generate_explanation(
+                analysis_data=result["data"], 
+                analysis_type="feature_analysis"
+            )
+            result["llm_response"] = ai_explanation
+        except Exception as e:
+            print(f"Warning: AI explanation failed: {e}")
+            # Continue without AI explanation
+            result["llm_response"] = {
+                "summary": "Feature analysis completed successfully.",
+                "detailed_explanation": "Detailed feature-level drift analysis has been completed, showing individual feature changes and importance rankings. AI explanations are temporarily unavailable.",
+                "key_takeaways": [
+                    "Feature analysis completed successfully", 
+                    "Check individual feature drift patterns",
+                    "AI explanations will return when service is restored"
+                ]
+            }
+
+        return result
         
     except HTTPException:
         raise

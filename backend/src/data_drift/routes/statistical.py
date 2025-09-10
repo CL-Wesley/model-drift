@@ -5,6 +5,7 @@ from scipy.stats import ks_2samp, entropy, chi2_contingency
 from datetime import datetime
 from .upload import get_session_storage
 from ...shared.session_manager import get_session_manager
+from ...shared.ai_explanation_service import ai_explanation_service
 
 router = APIRouter(
     prefix="/data-drift",
@@ -255,7 +256,28 @@ async def get_statistical_reports(session_id: str):
                 }
             }
         }
-        
+
+        # Generate AI explanation for the analysis results
+        try:
+            ai_explanation = ai_explanation_service.generate_explanation(
+                analysis_data=result["data"], 
+                analysis_type="statistical_analysis"
+            )
+            result["llm_response"] = ai_explanation
+        except Exception as e:
+            print(f"Warning: AI explanation failed: {e}")
+            # Continue without AI explanation
+            result["llm_response"] = {
+                "summary": "Statistical drift analysis completed successfully.",
+                "detailed_explanation": "The statistical analysis has been completed using various drift detection methods including KS tests and chi-square tests. AI explanations are temporarily unavailable.",
+                "key_takeaways": [
+                    "Statistical analysis completed",
+                    "Review drift metrics for insights", 
+                    "AI explanations will return when service is restored"
+                ]
+            }
+
+        return result
     except HTTPException:
         raise
     except Exception as e:

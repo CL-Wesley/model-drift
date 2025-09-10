@@ -16,6 +16,7 @@ from ..services.analysis.statistical_significance_service import statistical_sig
 from ..models.analysis_config import AnalysisConfiguration, ModelType, DriftThresholds
 from pydantic import ValidationError, BaseModel
 from ...shared.session_manager import get_session_manager
+from ...shared.ai_explanation_service import ai_explanation_service
 
 # Session-to-UploadFile Adapter Classes
 class SessionUploadFile:
@@ -546,7 +547,29 @@ async def session_performance_comparison(session_id: str):
             reference_file, current_file, model_file, full_config
         )
         
-        return serialize_response(result)
+        serialized_result = serialize_response(result)
+
+        # Generate AI explanation for the performance comparison analysis
+        try:
+            ai_explanation = ai_explanation_service.generate_explanation(
+                analysis_data=serialized_result, 
+                analysis_type="model_performance"
+            )
+            serialized_result["llm_response"] = ai_explanation
+        except Exception as e:
+            print(f"Warning: AI explanation failed: {e}")
+            # Continue without AI explanation
+            serialized_result["llm_response"] = {
+                "summary": "Model performance comparison analysis completed successfully.",
+                "detailed_explanation": "Performance comparison between reference and current model predictions has been completed. AI explanations are temporarily unavailable.",
+                "key_takeaways": [
+                    "Performance comparison analysis completed successfully",
+                    "Review performance metrics for degradation patterns",
+                    "AI explanations will return when service is restored"
+                ]
+            }
+        
+        return serialized_result
         
     except HTTPException:
         raise
@@ -612,7 +635,29 @@ async def session_degradation_metrics(session_id: str):
             reference_file, current_file, model_file, full_config
         )
         
-        return serialize_response(result)
+        serialized_result = serialize_response(result)
+
+        # Generate AI explanation for the degradation metrics analysis
+        try:
+            ai_explanation = ai_explanation_service.generate_explanation(
+                analysis_data=serialized_result, 
+                analysis_type="degradation_metrics"
+            )
+            serialized_result["llm_response"] = ai_explanation
+        except Exception as e:
+            print(f"Warning: AI explanation failed: {e}")
+            # Continue without AI explanation
+            serialized_result["llm_response"] = {
+                "summary": "Model degradation metrics analysis completed successfully.",
+                "detailed_explanation": "Comprehensive degradation analysis including model disagreement and confidence patterns has been completed. AI explanations are temporarily unavailable.",
+                "key_takeaways": [
+                    "Degradation metrics analysis completed successfully",
+                    "Review model disagreement and confidence trends",
+                    "AI explanations will return when service is restored"
+                ]
+            }
+        
+        return serialized_result
         
     except HTTPException:
         raise
@@ -678,7 +723,29 @@ async def session_statistical_significance(session_id: str):
             reference_file, current_file, model_file, full_config
         )
         
-        return serialize_response(result)
+        serialized_result = serialize_response(result)
+
+        # Generate AI explanation for the statistical significance analysis
+        try:
+            ai_explanation = ai_explanation_service.generate_explanation(
+                analysis_data=serialized_result, 
+                analysis_type="statistical_significance"
+            )
+            serialized_result["llm_response"] = ai_explanation
+        except Exception as e:
+            print(f"Warning: AI explanation failed: {e}")
+            # Continue without AI explanation
+            serialized_result["llm_response"] = {
+                "summary": "Statistical significance analysis completed successfully.",
+                "detailed_explanation": "Statistical testing of model performance changes has been completed with hypothesis testing and effect size analysis. AI explanations are temporarily unavailable.",
+                "key_takeaways": [
+                    "Statistical significance analysis completed successfully",
+                    "Review statistical test results and confidence intervals",
+                    "AI explanations will return when service is restored"
+                ]
+            }
+        
+        return serialized_result
         
     except HTTPException:
         raise

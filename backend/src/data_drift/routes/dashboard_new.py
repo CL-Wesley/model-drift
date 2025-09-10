@@ -5,6 +5,7 @@ import numpy as np
 from scipy.stats import ks_2samp, chi2_contingency, entropy
 from .upload import get_session_storage
 from ...shared.session_manager import get_session_manager
+from ...shared.ai_explanation_service import ai_explanation_service
 
 router = APIRouter(prefix="/data-drift", tags=["Data Drift - Dashboard"])
 
@@ -159,7 +160,7 @@ async def get_drift_dashboard(session_id: str):
 
         data_quality_score = reference_df.notnull().mean().mean()
 
-        return {
+        result = {
             "status": "success",
             "data": {
                 "high_drift_features": high_drift_features,
@@ -177,6 +178,28 @@ async def get_drift_dashboard(session_id: str):
                 ]
             }
         }
+
+        # Generate AI explanation for the dashboard analysis
+        try:
+            ai_explanation = ai_explanation_service.generate_explanation(
+                analysis_data=result["data"], 
+                analysis_type="data_drift_dashboard"
+            )
+            result["llm_response"] = ai_explanation
+        except Exception as e:
+            print(f"Warning: AI explanation failed: {e}")
+            # Continue without AI explanation
+            result["llm_response"] = {
+                "summary": "Data drift dashboard analysis completed successfully.",
+                "detailed_explanation": "Your comprehensive data drift dashboard has been generated, showing drift patterns across all features. AI explanations are temporarily unavailable.",
+                "key_takeaways": [
+                    "Dashboard analysis completed successfully",
+                    "Review drift scores and feature patterns",
+                    "AI explanations will return when service is restored"
+                ]
+            }
+
+        return result
         
     except HTTPException:
         raise

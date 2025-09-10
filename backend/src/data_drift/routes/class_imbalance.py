@@ -18,6 +18,7 @@ except ImportError:
 
 from .upload import get_session_storage
 from ...shared.session_manager import get_session_manager
+from ...shared.ai_explanation_service import ai_explanation_service
 
 router = APIRouter(
     prefix="/data-drift/class-imbalance",
@@ -463,7 +464,7 @@ async def get_class_imbalance_analysis(session_id: str):
             {"timestamp": datetime.utcnow().isoformat(), "imbalance_ratio": imbalance_ratio}
         ]
 
-        return {
+        result = {
             "status": "success",
             "data": {
                 # Executive summary metrics
@@ -510,6 +511,28 @@ async def get_class_imbalance_analysis(session_id: str):
                 }
             }
         }
+
+        # Generate AI explanation for the class imbalance analysis
+        try:
+            ai_explanation = ai_explanation_service.generate_explanation(
+                analysis_data=result["data"], 
+                analysis_type="class_imbalance"
+            )
+            result["llm_response"] = ai_explanation
+        except Exception as e:
+            print(f"Warning: AI explanation failed: {e}")
+            # Continue without AI explanation
+            result["llm_response"] = {
+                "summary": "Class imbalance analysis completed successfully.",
+                "detailed_explanation": "Class distribution analysis has been completed, showing target variable balance patterns and statistical significance. AI explanations are temporarily unavailable.",
+                "key_takeaways": [
+                    "Class imbalance analysis completed successfully",
+                    "Review class distribution and performance metrics",
+                    "AI explanations will return when service is restored"
+                ]
+            }
+
+        return result
         
     except HTTPException:
         raise
