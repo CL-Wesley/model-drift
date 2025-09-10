@@ -25,6 +25,54 @@ router = APIRouter(
     tags=["Data Drift - Class Imbalance"]
 )
 
+def create_ai_summary_for_class_imbalance(analysis_data: dict) -> dict:
+    """
+    Summarizes the detailed class imbalance analysis into a compact format suitable for an LLM prompt.
+    """
+    summary = {
+        "target_column": analysis_data.get("target_column"),
+        "reference_class_distribution": analysis_data.get("reference_class_distribution", {}),
+        "current_class_distribution": analysis_data.get("current_class_distribution", {}),
+        "chi_square_statistic": analysis_data.get("chi_square_test", {}).get("chi2_statistic"),
+        "chi_square_p_value": analysis_data.get("chi_square_test", {}).get("p_value"),
+        "chi_square_significant": analysis_data.get("chi_square_test", {}).get("is_significant"),
+        "overall_imbalance_severity": analysis_data.get("imbalance_metrics", {}).get("overall_imbalance_severity"),
+        "predictions_available": analysis_data.get("predictions_available", {}),
+        "recommendations": analysis_data.get("recommendations", [])
+    }
+    
+    # Add top-level class changes (avoid sending full distribution arrays)
+    ref_dist = analysis_data.get("reference_class_distribution", {})
+    curr_dist = analysis_data.get("current_class_distribution", {})
+    
+    class_changes = []
+    for class_name in ref_dist.keys():
+        ref_pct = ref_dist.get(class_name, 0)
+        curr_pct = curr_dist.get(class_name, 0)
+        change = curr_pct - ref_pct
+        if abs(change) > 5:  # Only include significant changes > 5%
+            class_changes.append({
+                "class": class_name,
+                "reference_percentage": round(ref_pct, 1),
+                "current_percentage": round(curr_pct, 1),
+                "change": round(change, 1)
+            })
+    
+    summary["significant_class_changes"] = class_changes
+    
+    # Add performance metrics summary if available
+    performance_metrics = analysis_data.get("per_class_performance", {})
+    if performance_metrics:
+        summary["performance_available"] = True
+        summary["performance_summary"] = {
+            "classes_analyzed": len(performance_metrics),
+            "has_classification_report": "reference_classification_report" in performance_metrics
+        }
+    else:
+        summary["performance_available"] = False
+    
+    return summary
+
 def get_session_data(session_id: str):
     """Get session data with fallback logic: unified session first, then individual storage"""
     # Try unified session manager first (priority)
@@ -514,8 +562,9 @@ async def get_class_imbalance_analysis(session_id: str):
 
         # Generate AI explanation for the class imbalance analysis
         try:
+            ai_summary_payload = create_ai_summary_for_class_imbalance(result["data"])
             ai_explanation = ai_explanation_service.generate_explanation(
-                analysis_data=result["data"], 
+                analysis_data=ai_summary_payload, 
                 analysis_type="class_imbalance"
             )
             result["llm_response"] = ai_explanation

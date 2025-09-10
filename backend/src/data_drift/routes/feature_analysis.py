@@ -43,6 +43,42 @@ def calc_change(ref, curr):
         return 0.0
     return round(((curr - ref) / ref) * 100, 1)
 
+def create_ai_summary_for_feature_analysis(analysis_data: dict) -> dict:
+    """
+    Summarizes the detailed feature analysis into a compact format suitable for an LLM prompt.
+    """
+    data = analysis_data.get("data", {})
+    executive_summary = data.get("executive_summary", {})
+    insights = data.get("insights", {})
+    
+    summary = {
+        "total_features_analyzed": executive_summary.get("total_features_analyzed", 0),
+        "features_with_drift": executive_summary.get("features_with_drift", 0),
+        "drift_percentage": executive_summary.get("drift_percentage", 0),
+        "overall_drift_score": executive_summary.get("overall_drift_score", 0),
+        "highest_drift_feature": executive_summary.get("highest_drift_feature"),
+        "risk_level": insights.get("risk_level", "Unknown"),
+        "summary_text": insights.get("summary_text", ""),
+        "recommendations": insights.get("recommendations", [])
+    }
+    
+    # Get top 5 most drifted features (without full distribution data)
+    feature_analysis = data.get("feature_analysis", [])
+    sorted_features = sorted(feature_analysis, key=lambda x: x.get('drift_score', 0), reverse=True)
+    
+    top_features = []
+    for feature in sorted_features[:5]:
+        top_features.append({
+            "feature_name": feature.get("feature_name"),
+            "drift_score": round(feature.get("drift_score", 0), 3),
+            "drift_severity": feature.get("drift_severity"),
+            "drift_detected": feature.get("drift_detected", False)
+        })
+    
+    summary["top_drifted_features"] = top_features
+    
+    return summary
+
 def generate_feature_analysis_insights(feature_results, overall_drift_score):
     """Generate human-readable insights for feature analysis"""
     drifted_features = [f for f in feature_results if f['drift_detected']]
@@ -438,8 +474,9 @@ async def get_feature_analysis(session_id: str):
 
         # Generate AI explanation for the feature analysis
         try:
+            ai_summary_payload = create_ai_summary_for_feature_analysis(result)
             ai_explanation = ai_explanation_service.generate_explanation(
-                analysis_data=result["data"], 
+                analysis_data=ai_summary_payload, 
                 analysis_type="feature_analysis"
             )
             result["llm_response"] = ai_explanation

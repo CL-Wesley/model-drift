@@ -18,6 +18,91 @@ from pydantic import ValidationError, BaseModel
 from ...shared.session_manager import get_session_manager
 from ...shared.ai_explanation_service import ai_explanation_service
 
+def create_ai_summary_for_performance_comparison(analysis_data: dict) -> dict:
+    """
+    Summarizes performance comparison analysis for AI explanation.
+    """
+    summary = {
+        "model_type": analysis_data.get("model_info", {}).get("model_type"),
+        "analysis_name": analysis_data.get("analysis_info", {}).get("analysis_name"),
+        "reference_performance": analysis_data.get("reference_performance", {}),
+        "current_performance": analysis_data.get("current_performance", {}),
+        "statistical_test_results": analysis_data.get("statistical_tests", {}),
+        "overall_drift_status": analysis_data.get("drift_assessment", {}).get("overall_status"),
+        "recommendations": analysis_data.get("recommendations", [])
+    }
+    
+    # Add key metrics comparison (avoid full metric arrays)
+    ref_perf = analysis_data.get("reference_performance", {})
+    curr_perf = analysis_data.get("current_performance", {})
+    
+    key_metrics = []
+    for metric_name in ["accuracy", "precision", "recall", "f1_score", "mse", "rmse", "r2"]:
+        if metric_name in ref_perf and metric_name in curr_perf:
+            key_metrics.append({
+                "metric": metric_name,
+                "reference_value": round(ref_perf[metric_name], 4),
+                "current_value": round(curr_perf[metric_name], 4),
+                "change": round(curr_perf[metric_name] - ref_perf[metric_name], 4)
+            })
+    
+    summary["key_metrics_comparison"] = key_metrics[:5]  # Limit to top 5 metrics
+    return summary
+
+def create_ai_summary_for_degradation_metrics(analysis_data: dict) -> dict:
+    """
+    Summarizes degradation metrics analysis for AI explanation.
+    """
+    summary = {
+        "model_type": analysis_data.get("model_info", {}).get("model_type"),
+        "analysis_name": analysis_data.get("analysis_info", {}).get("analysis_name"),
+        "disagreement_analysis": analysis_data.get("disagreement_analysis", {}),
+        "confidence_analysis": analysis_data.get("confidence_analysis", {}),
+        "feature_importance_drift": analysis_data.get("feature_importance_drift", {}),
+        "overall_assessment": analysis_data.get("overall_assessment", {}),
+        "recommendations": analysis_data.get("recommendations", [])
+    }
+    
+    # Extract key degradation indicators
+    disagreement = analysis_data.get("disagreement_analysis", {})
+    if disagreement:
+        summary["disagreement_rate"] = disagreement.get("disagreement_rate")
+        summary["prediction_stability"] = disagreement.get("stability_score")
+    
+    confidence = analysis_data.get("confidence_analysis", {})
+    if confidence:
+        summary["confidence_decline"] = confidence.get("confidence_decline")
+        summary["low_confidence_predictions"] = confidence.get("low_confidence_count")
+    
+    return summary
+
+def create_ai_summary_for_statistical_significance(analysis_data: dict) -> dict:
+    """
+    Summarizes statistical significance analysis for AI explanation.
+    """
+    summary = {
+        "model_type": analysis_data.get("model_info", {}).get("model_type"),
+        "analysis_name": analysis_data.get("analysis_info", {}).get("analysis_name"),
+        "hypothesis_test_results": analysis_data.get("hypothesis_tests", {}),
+        "effect_size_analysis": analysis_data.get("effect_sizes", {}),
+        "power_analysis": analysis_data.get("power_analysis", {}),
+        "multiple_comparisons": analysis_data.get("multiple_comparisons", {}),
+        "overall_significance": analysis_data.get("overall_assessment", {}),
+        "recommendations": analysis_data.get("recommendations", [])
+    }
+    
+    # Extract key significance indicators
+    hypothesis_tests = analysis_data.get("hypothesis_tests", {})
+    if hypothesis_tests:
+        summary["significant_tests"] = len([test for test in hypothesis_tests.values() if test.get("is_significant")])
+        summary["total_tests"] = len(hypothesis_tests)
+    
+    effect_sizes = analysis_data.get("effect_sizes", {})
+    if effect_sizes:
+        summary["large_effect_sizes"] = len([effect for effect in effect_sizes.values() if effect.get("magnitude") == "large"])
+    
+    return summary
+
 # Session-to-UploadFile Adapter Classes
 class SessionUploadFile:
     """Adapter class to convert session data back to UploadFile-like object"""
@@ -551,8 +636,9 @@ async def session_performance_comparison(session_id: str):
 
         # Generate AI explanation for the performance comparison analysis
         try:
+            ai_summary_payload = create_ai_summary_for_performance_comparison(serialized_result)
             ai_explanation = ai_explanation_service.generate_explanation(
-                analysis_data=serialized_result, 
+                analysis_data=ai_summary_payload, 
                 analysis_type="model_performance"
             )
             serialized_result["llm_response"] = ai_explanation
@@ -639,8 +725,9 @@ async def session_degradation_metrics(session_id: str):
 
         # Generate AI explanation for the degradation metrics analysis
         try:
+            ai_summary_payload = create_ai_summary_for_degradation_metrics(serialized_result)
             ai_explanation = ai_explanation_service.generate_explanation(
-                analysis_data=serialized_result, 
+                analysis_data=ai_summary_payload, 
                 analysis_type="degradation_metrics"
             )
             serialized_result["llm_response"] = ai_explanation
@@ -727,8 +814,9 @@ async def session_statistical_significance(session_id: str):
 
         # Generate AI explanation for the statistical significance analysis
         try:
+            ai_summary_payload = create_ai_summary_for_statistical_significance(serialized_result)
             ai_explanation = ai_explanation_service.generate_explanation(
-                analysis_data=serialized_result, 
+                analysis_data=ai_summary_payload, 
                 analysis_type="statistical_significance"
             )
             serialized_result["llm_response"] = ai_explanation

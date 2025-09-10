@@ -52,6 +52,47 @@ def psi(ref, curr, bins=10):
     except:
         return 0.0
 
+def create_ai_summary_for_statistical_analysis(analysis_data: dict) -> dict:
+    """
+    Summarizes the detailed statistical analysis into a compact format suitable for an LLM prompt.
+    """
+    summary = {
+        "total_features": analysis_data.get("total_features", 0),
+        "overall_drift_score": analysis_data.get("overall_drift_score"),
+        "overall_status": analysis_data.get("overall_status"),
+        "data_quality_score": analysis_data.get("data_quality_score"),
+        "executive_summary": analysis_data.get("executive_summary", "")
+    }
+
+    # Add summary statistics instead of full feature arrays
+    summary_stats = analysis_data.get("summary_stats", {})
+    summary.update({
+        "high_drift_features": summary_stats.get("high_drift_features", 0),
+        "medium_drift_features": summary_stats.get("medium_drift_features", 0), 
+        "low_drift_features": summary_stats.get("low_drift_features", 0),
+        "significant_ks_tests": summary_stats.get("significant_ks_tests", 0),
+        "significant_chi_tests": summary_stats.get("significant_chi_tests", 0)
+    })
+
+    # Add top 5 most drifted features only
+    feature_analysis = analysis_data.get("feature_analysis", [])
+    sorted_features = sorted(feature_analysis, key=lambda x: x.get('drift_score', 0), reverse=True)
+    
+    top_drifted_features = []
+    for feature in sorted_features[:5]:
+        top_drifted_features.append({
+            "feature": feature.get("feature"),
+            "data_type": feature.get("data_type"),
+            "drift_score": round(feature.get("drift_score", 0), 3),
+            "status": feature.get("status"),
+            "p_value": round(feature.get("p_value", 1), 4),
+            "ks_statistic": round(feature.get("ks_statistic", 0), 3)
+        })
+    
+    summary["top_drifted_features"] = top_drifted_features
+    
+    return summary
+
 @router.get("/statistical-reports/{session_id}")
 async def get_statistical_reports(session_id: str):
     """
@@ -259,8 +300,9 @@ async def get_statistical_reports(session_id: str):
 
         # Generate AI explanation for the analysis results
         try:
+            ai_summary_payload = create_ai_summary_for_statistical_analysis(result["data"])
             ai_explanation = ai_explanation_service.generate_explanation(
-                analysis_data=result["data"], 
+                analysis_data=ai_summary_payload, 
                 analysis_type="statistical_analysis"
             )
             result["llm_response"] = ai_explanation

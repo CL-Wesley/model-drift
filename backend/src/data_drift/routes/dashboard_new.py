@@ -41,6 +41,60 @@ def compute_kl_divergence(p, q):
     q = np.array(q) + 1e-10
     return entropy(p, q)
 
+def create_ai_summary_for_dashboard(analysis_data: dict) -> dict:
+    """
+    Summarizes the detailed dashboard analysis into a compact format suitable for an LLM prompt.
+    This prevents token limit issues by sending only high-level insights instead of raw data.
+    """
+    # Extract top-level KPIs
+    summary = {
+        "overall_status": analysis_data.get("overall_status"),
+        "overall_drift_score": round(analysis_data.get("overall_drift_score", 0), 2),
+        "total_features_analyzed": analysis_data.get("total_features"),
+        "high_drift_features_count": analysis_data.get("high_drift_features"),
+        "medium_drift_features_count": analysis_data.get("medium_drift_features"),
+        "data_quality_score": round(analysis_data.get("data_quality_score", 0), 2),
+        "executive_summary": analysis_data.get("executive_summary", "")
+    }
+
+    # Extract info for ONLY the top N most drifted features
+    # This is the most important step to reduce token count
+    feature_analysis = analysis_data.get("feature_analysis", [])
+    
+    # Sort features by drift score to find the most impactful ones
+    sorted_features = sorted(feature_analysis, key=lambda x: x.get('drift_score', 0), reverse=True)
+    
+    top_n = 5  # Limit to top 5 features to keep prompt manageable
+    top_drifted_features_summary = []
+
+    for feature in sorted_features[:top_n]:
+        feature_summary = {
+            "feature_name": feature.get("feature"),
+            "drift_status": feature.get("status"),
+            "drift_score": round(feature.get("drift_score", 0), 2),
+            "feature_type": feature.get("feature_type", "unknown")
+        }
+        
+        # Add a simple change description without raw distribution data
+        if feature.get("status") in ["high", "critical"]:
+            if feature.get("feature_type") == "numerical":
+                ref_mean = feature.get("ref_mean", 0)
+                curr_mean = feature.get("curr_mean", 0)
+                if ref_mean != 0:
+                    pct_change = round(((curr_mean - ref_mean) / ref_mean) * 100, 1)
+                    feature_summary["change_description"] = f"Mean changed by {pct_change}%"
+            elif feature.get("feature_type") == "categorical":
+                feature_summary["change_description"] = "Category distribution has shifted significantly"
+        
+        top_drifted_features_summary.append(feature_summary)
+
+    summary["top_drifted_features"] = top_drifted_features_summary
+    
+    # Add recommendations from the original analysis
+    summary["recommendations"] = analysis_data.get("recommendations", [])
+    
+    return summary
+
 @router.get("/dashboard/{session_id}")
 async def get_drift_dashboard(session_id: str):
     """
@@ -181,8 +235,12 @@ async def get_drift_dashboard(session_id: str):
 
         # Generate AI explanation for the dashboard analysis
         try:
+            # *** NEW STEP: Create the summary FIRST ***
+            ai_summary_payload = create_ai_summary_for_dashboard(result["data"])
+
             ai_explanation = ai_explanation_service.generate_explanation(
-                analysis_data=result["data"], 
+                # *** CHANGE: Send the summary, NOT the full result["data"] ***
+                analysis_data=ai_summary_payload, 
                 analysis_type="data_drift_dashboard"
             )
             result["llm_response"] = ai_explanation
