@@ -104,6 +104,24 @@ class SessionManager:
             return True
         return False
     
+    def update_session_config(self, session_id: str, config: Dict[str, Any]) -> bool:
+        """
+        Update session configuration with additional data like target column and predictions
+        
+        Args:
+            session_id: Session identifier
+            config: Dictionary containing configuration updates
+            
+        Returns:
+            True if update successful, False if session not found
+        """
+        if session_id not in self._storage:
+            return False
+        
+        # Update the session data with new configuration
+        self._storage[session_id].update(config)
+        return True
+    
     def list_sessions(self) -> list:
         """List all active sessions"""
         sessions = []

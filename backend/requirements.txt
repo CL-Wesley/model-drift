@@ -10,3 +10,6 @@ python-jose
 passlib
 joblib
 shap
+boto3
+python-dotenv
+dotenv

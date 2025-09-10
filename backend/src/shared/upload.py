@@ -15,6 +15,9 @@ async def unified_upload(
     current_data: UploadFile = File(..., description="Current dataset CSV file"),
     model_file: Optional[UploadFile] = File(None, description="Optional: Trained model pickle file"),
     config: Optional[str] = Form(None, description="Optional JSON configuration for Model Drift analysis"),
+    target_column: Optional[str] = Form(None, description="Optional: Name of target column for class imbalance analysis"),
+    reference_predictions: Optional[str] = Form(None, description="Optional: JSON array of model predictions for reference data"),
+    current_predictions: Optional[str] = Form(None, description="Optional: JSON array of model predictions for current data"),
     session_id: Optional[str] = None
 ):
     """
@@ -87,6 +90,33 @@ async def unified_upload(
             model_file_content = await model_file.read()
             model_filename = model_file.filename
         
+        # Parse optional predictions if provided
+        parsed_reference_predictions = None
+        parsed_current_predictions = None
+        
+        if reference_predictions:
+            try:
+                parsed_reference_predictions = json.loads(reference_predictions)
+                if len(parsed_reference_predictions) != len(reference_df):
+                    raise ValueError(f"Reference predictions length ({len(parsed_reference_predictions)}) must match reference dataset length ({len(reference_df)})")
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid reference predictions: {str(e)}")
+        
+        if current_predictions:
+            try:
+                parsed_current_predictions = json.loads(current_predictions)
+                if len(parsed_current_predictions) != len(current_df):
+                    raise ValueError(f"Current predictions length ({len(parsed_current_predictions)}) must match current dataset length ({len(current_df)})")
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid current predictions: {str(e)}")
+        
+        # Validate target column if provided
+        if target_column:
+            if target_column not in reference_df.columns:
+                raise HTTPException(status_code=400, detail=f"Target column '{target_column}' not found in reference dataset")
+            if target_column not in current_df.columns:
+                raise HTTPException(status_code=400, detail=f"Target column '{target_column}' not found in current dataset")
+
         # Store in unified session manager
         session_manager = get_session_manager()
         
@@ -107,6 +137,18 @@ async def unified_upload(
         if session_config and model_file:
             session_manager._storage[created_session_id]["config"] = session_config
         
+        # Store class imbalance analysis configuration if provided
+        class_imbalance_config = {}
+        if target_column:
+            class_imbalance_config["target_column"] = target_column
+        if parsed_reference_predictions:
+            class_imbalance_config["reference_predictions"] = parsed_reference_predictions
+        if parsed_current_predictions:
+            class_imbalance_config["current_predictions"] = parsed_current_predictions
+        
+        if class_imbalance_config:
+            session_manager._storage[created_session_id].update(class_imbalance_config)
+        
         # Prepare response
         response_data = {
             "session_id": created_session_id,
@@ -118,7 +160,14 @@ async def unified_upload(
                 "current_columns": list(current_df.columns),
                 "common_columns": list(set(reference_df.columns) & set(current_df.columns)),
                 "has_model": model_file is not None,
-                "upload_timestamp": datetime.utcnow().isoformat()
+                "upload_timestamp": datetime.utcnow().isoformat(),
+                # Class imbalance configuration status
+                "class_imbalance_ready": bool(target_column),
+                "target_column": target_column,
+                "predictions_provided": {
+                    "reference": parsed_reference_predictions is not None,
+                    "current": parsed_current_predictions is not None
+                }
             },
             "analysis_endpoints": {
                 "data_drift": {

@@ -556,6 +556,18 @@ class EnhancedModelService:
         
         is_pipeline = hasattr(model, 'named_steps') or hasattr(model, 'steps')
         
+        # Extract algorithm name (for pipelines, get the final estimator)
+        if is_pipeline:
+            if hasattr(model, 'named_steps'):
+                # Get the last step which should be the estimator
+                algorithm = list(model.named_steps.keys())[-1]
+            elif hasattr(model, 'steps'):
+                algorithm = model.steps[-1][1].__class__.__name__
+            else:
+                algorithm = str(type(model).__name__)
+        else:
+            algorithm = str(type(model).__name__)
+        
         return ModelInfo(
             model_type=str(type(model).__name__),
             model_class=model.__class__.__module__ + "." + model.__class__.__name__,
