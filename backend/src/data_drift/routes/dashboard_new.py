@@ -118,93 +118,120 @@ async def get_drift_dashboard(session_id: str):
         drifted_features = []
         feature_analysis_list = []
 
-        # Define bins for numeric columns (using same bins for ref and curr)
-        numeric_bins = {
-            col: np.histogram_bin_edges(reference_df[col].dropna(), bins='auto')
-            for col in reference_df.select_dtypes(include=["int64", "float64"]).columns
-        }
+        # Only analyze common columns
+        common_columns = list(set(reference_df.columns) & set(current_df.columns))
+        
+        if not common_columns:
+            raise HTTPException(status_code=400, detail="No common columns found between datasets")
 
-        for col in reference_df.columns:
-            if col not in current_df.columns:
-                continue  # Skip columns that don't exist in current dataset
-                
+        for col in common_columns:
             if reference_df[col].dtype in ["int64", "float64"]:
-                # KS test for drift
+                # Numerical features - use KS test
                 ref_vals = reference_df[col].dropna()
                 curr_vals = current_df[col].dropna()
                 
                 if len(ref_vals) == 0 or len(curr_vals) == 0:
                     continue
                     
-                stat, p_value = ks_2samp(ref_vals, curr_vals)
-                drift_status = "high" if p_value < 0.01 else "medium" if p_value < 0.05 else "low"
-                drift_score = abs(stat) * 5
+                ks_stat, p_value = ks_2samp(ref_vals, curr_vals)
+                
+                # Unified severity classification based on p-value
+                if p_value < 0.01:
+                    drift_status = "high"
+                elif p_value < 0.05:
+                    drift_status = "medium"
+                else:
+                    drift_status = "low"
+                
+                drift_score = abs(ks_stat) * 5  # Scale for display
 
-                # Compute histograms for ref and current with same bins
-                bins = numeric_bins[col]
+                # Compute histograms for visualization
+                bins = np.histogram_bin_edges(ref_vals, bins='auto')
                 ref_hist, _ = np.histogram(ref_vals, bins=bins, density=True)
                 curr_hist, _ = np.histogram(curr_vals, bins=bins, density=True)
-
-                kl_divergence = compute_kl_divergence(ref_hist, curr_hist)
-
-                # Convert histograms to list of frequencies in percentages
+                
                 distribution_ref = (ref_hist * 100).tolist()
                 distribution_current = (curr_hist * 100).tolist()
-
-                # Create labels for bins like "640-660"
                 bin_labels = [f"{int(bins[i])}-{int(bins[i+1])}" for i in range(len(bins)-1)]
-
+                
                 feature_analysis_list.append({
                     "feature": col,
+                    "feature_type": "numerical",
                     "drift_score": drift_score,
-                    "kl_divergence": round(kl_divergence, 3),
                     "status": drift_status,
                     "p_value": p_value,
+                    "ks_statistic": float(ks_stat),
                     "distribution_ref": distribution_ref,
                     "distribution_current": distribution_current,
                     "bin_labels": bin_labels
                 })
-
+                
             else:
-                # Categorical variables
+                # Categorical features - use Chi-square test
                 try:
-                    # Create contingency table
-                    crosstab = pd.crosstab(reference_df[col], current_df[col])
-                    chi2, p_value, _, _ = chi2_contingency(crosstab)
-                    drift_status = "high" if p_value < 0.01 else "medium" if p_value < 0.05 else "low"
-                    drift_score = chi2 / 10
-
-                    distribution_ref = reference_df[col].value_counts().to_dict()
-                    distribution_current = current_df[col].value_counts().to_dict()
-
+                    ref_counts = reference_df[col].value_counts()
+                    curr_counts = current_df[col].value_counts()
+                    
+                    # Align categories
+                    all_cats = ref_counts.index.union(curr_counts.index)
+                    ref_aligned = ref_counts.reindex(all_cats, fill_value=0)
+                    curr_aligned = curr_counts.reindex(all_cats, fill_value=0)
+                    
+                    if len(all_cats) > 1 and (ref_aligned > 0).sum() > 0 and (curr_aligned > 0).sum() > 0:
+                        contingency_table = np.array([ref_aligned.values, curr_aligned.values])
+                        chi2_stat, p_value, _, _ = chi2_contingency(contingency_table)
+                    else:
+                        chi2_stat, p_value = 0.0, 1.0
+                    
+                    # Unified severity classification based on p-value
+                    if p_value < 0.01:
+                        drift_status = "high"
+                    elif p_value < 0.05:
+                        drift_status = "medium"
+                    else:
+                        drift_status = "low"
+                        
+                    drift_score = chi2_stat / 10  # Scale for display
+                    
+                    distribution_ref = ref_counts.to_dict()
+                    distribution_current = curr_counts.to_dict()
+                    
                     feature_analysis_list.append({
                         "feature": col,
+                        "feature_type": "categorical", 
                         "drift_score": drift_score,
                         "status": drift_status,
                         "p_value": p_value,
+                        "chi2_statistic": float(chi2_stat),
                         "distribution_ref": distribution_ref,
                         "distribution_current": distribution_current
                     })
+                    
                 except Exception as e:
-                    # Handle cases where categorical crosstab fails
                     continue
-
+                    
             if drift_status in ["high", "medium"]:
                 drifted_features.append(col)
 
         if len(feature_analysis_list) == 0:
             raise HTTPException(status_code=400, detail="No features could be analyzed")
 
+        # Calculate overall metrics using consistent approach
         total_features = len(feature_analysis_list)
         high_drift_features = sum(1 for f in feature_analysis_list if f.get("status") == "high")
         medium_drift_features = sum(1 for f in feature_analysis_list if f.get("status") == "medium")
+        low_drift_features = sum(1 for f in feature_analysis_list if f.get("status") == "low")
+        
+        # Overall drift score as average
         overall_drift_score = sum(f["drift_score"] for f in feature_analysis_list) / total_features
-
-        overall_status = (
-            "high" if overall_drift_score > 3
-            else "medium" if overall_drift_score > 1
-            else "low"
-        )
+        
+        # Overall status based on feature counts
+        if high_drift_features > total_features * 0.3:  # >30% high drift features
+            overall_status = "high"
+        elif medium_drift_features + high_drift_features > total_features * 0.5:  # >50% medium+ drift
+            overall_status = "medium"
+        else:
+            overall_status = "low"
 
         top_features = ", ".join(drifted_features[:2]) if drifted_features else "no significant features"
         executive_summary = (

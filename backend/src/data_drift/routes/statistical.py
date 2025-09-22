@@ -3,6 +3,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException
 from scipy.stats import ks_2samp, entropy, chi2_contingency
 from datetime import datetime
+import numpy as np
 from .upload import get_session_storage
 from ...shared.session_manager import get_session_manager
 from ...shared.ai_explanation_service import ai_explanation_service
@@ -116,7 +117,6 @@ async def get_statistical_reports(session_id: str):
         feature_analysis_list = []
         ks_tests = []
         chi_tests = []
-        total_drift_score = 0
 
         # Only analyze common columns
         common_columns = list(set(reference_df.columns) & set(current_df.columns))
@@ -125,130 +125,142 @@ async def get_statistical_reports(session_id: str):
             raise HTTPException(status_code=400, detail="No common columns found between datasets")
 
         for col in common_columns:
-            dtype = "numerical" if reference_df[col].dtype in ["int64", "float64"] else "categorical"
-            missing_ref = int(reference_df[col].isna().sum())
-            missing_curr = int(current_df[col].isna().sum())
-            drift_score = 0.0
-            kl_divergence = 0.0
-            psi_value = 0.0
-            ks_statistic = 0.0
-            p_value = 1.0
-
-            if dtype == "numerical":
-                try:
-                    ref_vals = reference_df[col].dropna()
-                    curr_vals = current_df[col].dropna()
+            try:
+                ref_series = reference_df[col].dropna()
+                curr_series = current_df[col].dropna()
+                
+                # Skip if insufficient data
+                if len(ref_series) == 0 or len(curr_series) == 0:
+                    continue
+                
+                dtype = "numerical" if reference_df[col].dtype in ["int64", "float64"] else "categorical"
+                missing_ref = int(reference_df[col].isna().sum())
+                missing_curr = int(current_df[col].isna().sum())
+                
+                if dtype == "numerical":
+                    # Use same approach as dashboard - KS test with p-value based severity
+                    ks_stat, p_value = ks_2samp(ref_series, curr_series)
                     
-                    if len(ref_vals) == 0 or len(curr_vals) == 0:
-                        continue
-                        
-                    # Safer drift score calculation
-                    ref_std = ref_vals.std()
-                    if ref_std > 0:
-                        drift_score = abs(ref_vals.mean() - curr_vals.mean()) / ref_std
+                    # Unified severity classification
+                    if p_value < 0.01:
+                        status = "high"
+                    elif p_value < 0.05:
+                        status = "medium"
                     else:
-                        drift_score = 0.0
+                        status = "low"
                     
-                    # Safer KL divergence calculation
-                    try:
-                        ref_hist, bins = np.histogram(ref_vals, bins=10, density=True)
-                        curr_hist, _ = np.histogram(curr_vals, bins=bins, density=True)
-                        kl_divergence = float(entropy(ref_hist + 1e-6, curr_hist + 1e-6))
-                    except:
-                        kl_divergence = 0.0
+                    drift_score = abs(ks_stat) * 5  # Same scaling as dashboard
                     
-                    psi_value = psi(ref_vals, curr_vals)
-                    ks_statistic, p_value = ks_2samp(ref_vals, curr_vals)
+                    feature_stats = {
+                        "feature": col,
+                        "data_type": dtype,
+                        "ref_mean": float(ref_series.mean()),
+                        "ref_std": float(ref_series.std()),
+                        "ref_min": float(ref_series.min()),
+                        "ref_max": float(ref_series.max()),
+                        "curr_mean": float(curr_series.mean()),
+                        "curr_std": float(curr_series.std()),
+                        "curr_min": float(curr_series.min()),
+                        "curr_max": float(curr_series.max()),
+                        "missing_values_ref": missing_ref,
+                        "missing_values_current": missing_curr,
+                        "drift_score": drift_score,
+                        "ks_statistic": float(ks_stat),
+                        "p_value": float(p_value),
+                        "status": status
+                    }
                     
                     ks_tests.append({
                         "feature": col,
-                        "ks_statistic": float(ks_statistic),
+                        "ks_statistic": float(ks_stat),
                         "p_value": float(p_value),
                         "result": "Significant" if p_value < 0.05 else "Not Significant"
                     })
+                
+                else:  # categorical
+                    # Use same approach as dashboard - Chi-square with p-value based severity
+                    ref_counts = reference_df[col].value_counts()
+                    curr_counts = current_df[col].value_counts()
+                    
+                    # Align categories
+                    all_cats = ref_counts.index.union(curr_counts.index)
+                    ref_aligned = ref_counts.reindex(all_cats, fill_value=0)
+                    curr_aligned = curr_counts.reindex(all_cats, fill_value=0)
+                    
+                    if len(all_cats) > 1 and (ref_aligned > 0).sum() > 0 and (curr_aligned > 0).sum() > 0:
+                        contingency_table = np.array([ref_aligned.values, curr_aligned.values])
+                        chi2_stat, p_value, _, _ = chi2_contingency(contingency_table)
+                    else:
+                        chi2_stat, p_value = 0.0, 1.0
+                    
+                    # Unified severity classification
+                    if p_value < 0.01:
+                        status = "high"
+                    elif p_value < 0.05:
+                        status = "medium"
+                    else:
+                        status = "low"
+                    
+                    drift_score = chi2_stat / 10  # Same scaling as dashboard
                     
                     feature_stats = {
                         "feature": col,
                         "data_type": dtype,
-                        "ref_mean": float(ref_vals.mean()),
-                        "ref_std": float(ref_vals.std()),
-                        "ref_min": float(ref_vals.min()),
-                        "ref_max": float(ref_vals.max()),
-                        "curr_mean": float(curr_vals.mean()),
-                        "curr_std": float(curr_vals.std()),
-                        "curr_min": float(curr_vals.min()),
-                        "curr_max": float(curr_vals.max()),
+                        "ref_unique_values": len(ref_counts),
+                        "curr_unique_values": len(curr_counts),
+                        "ref_mode": ref_series.mode().iloc[0] if len(ref_series.mode()) > 0 else None,
+                        "curr_mode": curr_series.mode().iloc[0] if len(curr_series.mode()) > 0 else None,
                         "missing_values_ref": missing_ref,
                         "missing_values_current": missing_curr,
-                        "drift_score": float(drift_score),
-                        "kl_divergence": float(kl_divergence),
-                        "psi": float(psi_value),
-                        "ks_statistic": float(ks_statistic),
+                        "drift_score": drift_score,
+                        "chi2_statistic": float(chi2_stat),
                         "p_value": float(p_value),
-                        "status": "low" if drift_score < 0.5 else "medium" if drift_score < 1.5 else "high"
+                        "status": status
                     }
-                except Exception as e:
-                    # Skip problematic numerical features
-                    continue
-
-            else:
-                # Categorical features
-                try:
-                    ref_counts = reference_df[col].value_counts(normalize=True).to_dict()
-                    curr_counts = current_df[col].value_counts(normalize=True).to_dict()
-                    all_keys = set(ref_counts.keys()).union(curr_counts.keys())
-                    drift_score = sum(abs(ref_counts.get(k,0) - curr_counts.get(k,0)) for k in all_keys)
                     
-                    # Chi-Square test - safer implementation
-                    categories = list(all_keys)
-                    ref_vals = [reference_df[col].value_counts().get(k,0) for k in categories]
-                    curr_vals = [current_df[col].value_counts().get(k,0) for k in categories]
-                    
-                    if sum(ref_vals) > 0 and sum(curr_vals) > 0 and len(categories) > 1:
-                        chi2_stat, chi_p, _, _ = chi2_contingency([ref_vals, curr_vals])
-                        chi_tests.append({
-                            "feature": col,
-                            "chi_square": float(chi2_stat),
-                            "p_value": float(chi_p),
-                            "result": "Significant" if chi_p < 0.05 else "Not Significant"
-                        })
-                    
-                    feature_stats = {
+                    chi_tests.append({
                         "feature": col,
-                        "data_type": dtype,
-                        "ref_counts": {str(k): float(v) for k,v in ref_counts.items()},
-                        "curr_counts": {str(k): float(v) for k,v in curr_counts.items()},
-                        "missing_values_ref": missing_ref,
-                        "missing_values_current": missing_curr,
-                        "drift_score": float(drift_score),
-                        "kl_divergence": float(kl_divergence),
-                        "psi": float(psi_value),
-                        "ks_statistic": float(ks_statistic),
+                        "chi2_statistic": float(chi2_stat),
                         "p_value": float(p_value),
-                        "status": "low" if drift_score < 0.1 else "medium" if drift_score < 0.3 else "high"
-                    }
-                except Exception as e:
-                    # Skip problematic categorical features
-                    continue
-
-            total_drift_score += drift_score
-            feature_analysis_list.append(feature_stats)
+                        "result": "Significant" if p_value < 0.05 else "Not Significant"
+                    })
+                
+                feature_analysis_list.append(feature_stats)
+                
+            except Exception as e:
+                # Skip problematic features but log for debugging
+                print(f"Warning: Could not analyze feature {col}: {e}")
+                continue
 
         if len(feature_analysis_list) == 0:
             raise HTTPException(status_code=400, detail="No features could be analyzed")
 
-        overall_drift_score = total_drift_score / len(feature_analysis_list)
-        overall_status = "low" if overall_drift_score < 0.5 else "medium" if overall_drift_score < 1.5 else "high"
+        # Use same overall calculation approach as dashboard
+        total_features = len(feature_analysis_list)
+        high_drift_features = sum(1 for f in feature_analysis_list if f.get("status") == "high")
+        medium_drift_features = sum(1 for f in feature_analysis_list if f.get("status") == "medium")
+        low_drift_features = sum(1 for f in feature_analysis_list if f.get("status") == "low")
+        
+        # Overall drift score as average
+        overall_drift_score = sum(f["drift_score"] for f in feature_analysis_list) / total_features
+        
+        # Overall status based on feature counts
+        if high_drift_features > total_features * 0.3:  # >30% high drift features
+            overall_status = "high"
+        elif medium_drift_features + high_drift_features > total_features * 0.5:  # >50% medium+ drift
+            overall_status = "medium"
+        else:
+            overall_status = "low"
         
         # Safer data quality score calculation
         total_cells = current_df.shape[0] * current_df.shape[1]
         missing_cells = sum(f.get("missing_values_current", 0) for f in feature_analysis_list)
         data_quality_score = 1 - (missing_cells / max(total_cells, 1))
 
-        # Dynamic executive summary
-        count_high = sum(1 for f in feature_analysis_list if f["status"]=="high")
-        count_medium = sum(1 for f in feature_analysis_list if f["status"]=="medium")
-        count_low = sum(1 for f in feature_analysis_list if f["status"]=="low")
+        # Dynamic executive summary using consistent metrics
+        count_high = high_drift_features
+        count_medium = medium_drift_features  
+        count_low = low_drift_features
         executive_summary = (
             f"Analyzed {len(feature_analysis_list)} features: "
             f"{count_high} high drift, {count_medium} medium drift, {count_low} low drift. "
@@ -272,10 +284,11 @@ async def get_statistical_reports(session_id: str):
                             "drift_correlation": float(curr_corr),
                             "correlation_change": float(curr_corr - ref_corr)
                         })
+                        
                 except:
                     continue
 
-        return {
+        result = {
             "status": "success",
             "data": {
                 "feature_analysis": feature_analysis_list,
