@@ -4,39 +4,15 @@ from fastapi import APIRouter, HTTPException
 from scipy.stats import ks_2samp, entropy, chi2_contingency
 from datetime import datetime
 import numpy as np
-from .upload import get_session_storage
-from ...shared.session_manager import get_session_manager
 from ...shared.ai_explanation_service import ai_explanation_service
+from ...shared.models import AnalysisRequest
+from ...shared.s3_utils import load_s3_csv, validate_dataframe
 
 router = APIRouter(
     prefix="/data-drift",
     tags=["Data Drift - Statistical Reports"]
 )
 
-def get_session_data(session_id: str):
-    """Get session data with fallback logic: unified session first, then individual storage"""
-    # Try unified session manager first (priority)
-    unified_session_manager = get_session_manager()
-    if unified_session_manager.session_exists(session_id):
-        return unified_session_manager.get_data_drift_format(session_id)
-    
-    # Fallback to individual Data Drift session storage
-    individual_storage = get_session_storage()
-    if session_id in individual_storage:
-        # Convert individual storage format to expected format
-        individual_data = individual_storage[session_id]
-        return {
-            "reference_df": individual_data["reference"],
-            "current_df": individual_data["current"],
-            "reference_filename": individual_data.get("reference_filename", ""),
-            "current_filename": individual_data.get("current_filename", ""),
-            "reference_shape": individual_data.get("reference_shape", (0, 0)),
-            "current_shape": individual_data.get("current_shape", (0, 0)),
-            "common_columns": list(set(individual_data["reference"].columns) & set(individual_data["current"].columns)),
-            "upload_timestamp": individual_data.get("upload_timestamp", "")
-        }
-    
-    return None
 
 def psi(ref, curr, bins=10):
     """Population Stability Index (simplified)"""
@@ -94,25 +70,25 @@ def create_ai_summary_for_statistical_analysis(analysis_data: dict) -> dict:
     
     return summary
 
-@router.get("/statistical-reports/{session_id}")
-async def get_statistical_reports(session_id: str):
+@router.post("/statistical-reports")
+async def get_statistical_reports(request: AnalysisRequest):
     """
-    Get statistical reports analysis for uploaded datasets
+    Get statistical reports analysis for datasets loaded from S3
     
     Args:
-        session_id: Session identifier for uploaded data
+        request: AnalysisRequest containing S3 URLs and configuration
         
     Returns:
         Statistical reports analysis results
     """
     try:
-        # Get session data with fallback logic
-        session_data = get_session_data(session_id)
-        if not session_data:
-            raise HTTPException(status_code=404, detail="Session not found. Please upload data first.")
+        # Load data from S3 URLs
+        reference_df = load_s3_csv(request.reference_url)
+        current_df = load_s3_csv(request.current_url)
         
-        reference_df = session_data["reference_df"]
-        current_df = session_data["current_df"]
+        # Validate datasets
+        validate_dataframe(reference_df, "Reference")
+        validate_dataframe(current_df, "Current")
 
         feature_analysis_list = []
         ks_tests = []

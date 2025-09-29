@@ -19,6 +19,8 @@ except ImportError:
 from .upload import get_session_storage
 from ...shared.session_manager import get_session_manager
 from ...shared.ai_explanation_service import ai_explanation_service
+from ...shared.s3_utils import load_s3_csv, validate_dataframe
+from ...shared.models import AnalysisRequest
 
 router = APIRouter(
     prefix="/data-drift/class-imbalance",
@@ -571,6 +573,246 @@ async def get_class_imbalance_analysis(session_id: str):
         except Exception as e:
             print(f"Warning: AI explanation failed: {e}")
             # Continue without AI explanation
+            result["llm_response"] = {
+                "summary": "Class imbalance analysis completed successfully.",
+                "detailed_explanation": "Class distribution analysis has been completed, showing target variable balance patterns and statistical significance. AI explanations are temporarily unavailable.",
+                "key_takeaways": [
+                    "Class imbalance analysis completed successfully",
+                    "Review class distribution and performance metrics",
+                    "AI explanations will return when service is restored"
+                ]
+            }
+
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Class imbalance analysis failed: {str(e)}")
+
+
+@router.post("/analysis")
+async def class_imbalance_analysis_s3(request: AnalysisRequest):
+    """
+    S3-based Class Imbalance Analysis - stateless approach using S3 URLs
+    
+    Args:
+        request: AnalysisRequest containing S3 URLs and target column
+        
+    Returns:
+        Focused class imbalance analysis results with per-class performance metrics
+    """
+    try:
+        # Load data from S3
+        reference_df = load_s3_csv(request.reference_url)
+        current_df = load_s3_csv(request.current_url)
+        
+        # Validate datasets
+        validate_dataframe(reference_df, "Reference")
+        validate_dataframe(current_df, "Current")
+
+        # Validate required target column
+        if not request.target_column:
+            raise HTTPException(
+                status_code=400, 
+                detail="Target column is required for class imbalance analysis"
+            )
+        
+        target_col = request.target_column
+        
+        # Validate target column exists in both datasets
+        if target_col not in reference_df.columns:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Target column '{target_col}' not found in reference dataset. Available columns: {list(reference_df.columns)}"
+            )
+        
+        if target_col not in current_df.columns:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Target column '{target_col}' not found in current dataset. Available columns: {list(current_df.columns)}"
+            )
+
+        # Get predictions if provided (optional)
+        reference_predictions = getattr(request, 'reference_predictions', None)
+        current_predictions = getattr(request, 'current_predictions', None)
+
+        # Class counts and percentages (exact same logic as session endpoint)
+        class_counts_ref = reference_df[target_col].value_counts().to_dict()
+        class_counts_curr = current_df[target_col].value_counts().to_dict()
+
+        total_ref = int(reference_df.shape[0])
+        total_curr = int(current_df.shape[0])
+
+        # Identify minority class from reference dataset
+        minority_class = str(min(class_counts_ref.keys(), key=class_counts_ref.get))
+        
+        # Create UI-friendly class distribution array
+        all_classes = sorted(list(set(class_counts_ref.keys()).union(set(class_counts_curr.keys()))))
+        class_distribution = []
+        for class_label in all_classes:
+            ref_count = class_counts_ref.get(class_label, 0)
+            curr_count = class_counts_curr.get(class_label, 0)
+            ref_percent = round(ref_count / total_ref * 100, 2) if total_ref > 0 else 0
+            curr_percent = round(curr_count / total_curr * 100, 2) if total_curr > 0 else 0
+            
+            class_distribution.append({
+                "class_label": str(class_label),
+                "reference_count": int(ref_count),
+                "reference_percent": ref_percent,
+                "current_count": int(curr_count),
+                "current_percent": curr_percent,
+                "count_delta": int(curr_count - ref_count),
+                "percent_delta": round(curr_percent - ref_percent, 2)
+            })
+
+        # Calculate overall imbalance metrics (exact same logic)
+        max_count = max(class_counts_curr.values()) if class_counts_curr else 1
+        min_count = min(class_counts_curr.values()) if class_counts_curr else 1
+        imbalance_ratio = float(max_count / max(min_count, 1))  # Prevent division by zero
+
+        # Determine severity level
+        if imbalance_ratio < 2:
+            severity = "Low"
+        elif imbalance_ratio < 5:
+            severity = "Medium"
+        else:
+            severity = "High"
+
+        # Advanced imbalance metrics (exact same logic)
+        gini_ref = gini(class_counts_ref)
+        gini_curr = gini(class_counts_curr)
+        entropy_ref = shannon_entropy(class_counts_ref)
+        entropy_curr = shannon_entropy(class_counts_curr)
+        enc_ref = effective_number_of_classes(class_counts_ref)
+        enc_curr = effective_number_of_classes(class_counts_curr)
+        cbi_ref = class_balance_index(class_counts_ref)
+        cbi_curr = class_balance_index(class_counts_curr)
+
+        # Chi-square test for statistical significance (exact same logic)
+        ref_vals = [class_counts_ref.get(c, 0) for c in all_classes]
+        curr_vals = [class_counts_curr.get(c, 0) for c in all_classes]
+        
+        try:
+            chi2_stat, p_value, dof, _ = chi2_contingency([ref_vals, curr_vals])
+            chi2_stat = float(chi2_stat)
+            p_value = float(p_value)
+            dof = int(dof)
+            chi_significance = "Highly Significant" if p_value < 0.01 else ("Significant" if p_value < 0.05 else "Not Significant")
+        except Exception as e:
+            chi2_stat, p_value, dof, chi_significance = 0.0, 1.0, 0, "Not Significant"
+
+        chi_square_test = {
+            "statistic": chi2_stat,
+            "p_value": p_value,
+            "degrees_of_freedom": dof,
+            "interpretation": chi_significance
+        }
+
+        # Calculate per-class performance metrics (exact same logic)
+        per_class_performance = calculate_per_class_metrics(
+            reference_df, 
+            current_df, 
+            target_col,
+            reference_predictions,
+            current_predictions
+        )
+        
+        # Generate human-readable analysis text
+        analysis_text = generate_analysis_text(
+            class_distribution, chi_square_test, minority_class, 
+            per_class_performance, severity
+        )
+
+        # Generate actionable recommendations (exact same logic)
+        recommendations = []
+        if severity == "High":
+            recommendations.extend([
+                "Consider applying SMOTE or other oversampling techniques",
+                "Adjust class weights in your model training",
+                "Consider threshold optimization for better minority class recall",
+                "Evaluate ensemble methods that handle imbalanced data well"
+            ])
+        elif severity == "Medium":
+            recommendations.extend([
+                "Monitor model performance metrics closely",
+                "Consider minor threshold adjustments if precision/recall trade-offs are needed",
+                "Evaluate if the distribution shift affects business metrics"
+            ])
+        else:
+            recommendations.extend([
+                "Current class balance is acceptable for most use cases",
+                "Continue regular monitoring of class distribution trends",
+                "Focus on other aspects of model performance"
+            ])
+
+        # Add recommendation based on whether predictions were available
+        if reference_predictions is None or current_predictions is None:
+            recommendations.append("⚠️ Provide model predictions for accurate per-class performance analysis")
+
+        # Imbalance trend over time (simulate for now)
+        trend_data = [
+            {"timestamp": datetime.utcnow().isoformat(), "imbalance_ratio": imbalance_ratio}
+        ]
+
+        result = {
+            "status": "success",
+            "data": {
+                # Executive summary metrics
+                "overall_imbalance_score": imbalance_ratio,
+                "severity_level": severity,
+                "minority_class_label": minority_class,
+                
+                # Dataset summary
+                "total_samples": {
+                    "reference": total_ref,
+                    "current": total_curr
+                },
+                
+                # UI-friendly class distribution
+                "class_distribution": class_distribution,
+                
+                # Statistical significance test
+                "chi_square_test": chi_square_test,
+                
+                # Real per-class model performance metrics
+                "per_class_performance": per_class_performance,
+                
+                # Advanced metrics (for deep-dive analysis)
+                "advanced_metrics": {
+                    "gini_coefficient": {"reference": gini_ref, "current": gini_curr, "delta": gini_curr - gini_ref},
+                    "shannon_entropy": {"reference": entropy_ref, "current": entropy_curr, "delta": entropy_curr - entropy_ref},
+                    "effective_number_of_classes": {"reference": enc_ref, "current": enc_curr, "delta": enc_curr - enc_ref},
+                    "class_balance_index": {"reference": cbi_ref, "current": cbi_curr, "delta": cbi_curr - cbi_ref}
+                },
+                
+                # Trend analysis
+                "imbalance_trend_over_time": trend_data,
+                
+                # Human-readable insights
+                "analysis_text": analysis_text,
+                "recommendations": recommendations,
+                
+                # Metadata
+                "analysis_timestamp": datetime.utcnow().isoformat(),
+                "target_column": target_col,
+                "predictions_available": {
+                    "reference": reference_predictions is not None,
+                    "current": current_predictions is not None
+                }
+            }
+        }
+
+        # Generate AI explanation (exact same logic)
+        try:
+            ai_summary_payload = create_ai_summary_for_class_imbalance(result["data"])
+            ai_explanation = ai_explanation_service.generate_explanation(
+                analysis_data=ai_summary_payload, 
+                analysis_type="class_imbalance"
+            )
+            result["llm_response"] = ai_explanation
+        except Exception as e:
+            print(f"Warning: AI explanation failed: {e}")
             result["llm_response"] = {
                 "summary": "Class imbalance analysis completed successfully.",
                 "detailed_explanation": "Class distribution analysis has been completed, showing target variable balance patterns and statistical significance. AI explanations are temporarily unavailable.",

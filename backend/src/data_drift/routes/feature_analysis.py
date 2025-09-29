@@ -9,9 +9,9 @@ import warnings
 from dataclasses import dataclass
 import logging
 
-from .upload import get_session_storage
-from ...shared.session_manager import get_session_manager
 from ...shared.ai_explanation_service import ai_explanation_service
+from ...shared.models import AnalysisRequest
+from ...shared.s3_utils import load_s3_csv, validate_dataframe
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -565,35 +565,6 @@ class AdvancedDriftDetector:
             'category_distributions': {'reference': {}, 'current': {}, 'reference_counts': {}, 'current_counts': {}}
         }
 
-def get_session_data(session_id: str) -> Optional[Dict[str, Any]]:
-    """Get session data with fallback logic: unified session first, then individual storage"""
-    try:
-        # Try unified session manager first (priority)
-        unified_session_manager = get_session_manager()
-        if unified_session_manager.session_exists(session_id):
-            return unified_session_manager.get_data_drift_format(session_id)
-        
-        # Fallback to individual Data Drift session storage
-        individual_storage = get_session_storage()
-        if session_id in individual_storage:
-            # Convert individual storage format to expected format
-            individual_data = individual_storage[session_id]
-            return {
-                "reference_df": individual_data["reference"],
-                "current_df": individual_data["current"],
-                "reference_filename": individual_data.get("reference_filename", ""),
-                "current_filename": individual_data.get("current_filename", ""),
-                "reference_shape": individual_data.get("reference_shape", (0, 0)),
-                "current_shape": individual_data.get("current_shape", (0, 0)),
-                "common_columns": list(set(individual_data["reference"].columns) & set(individual_data["current"].columns)),
-                "upload_timestamp": individual_data.get("upload_timestamp", "")
-            }
-        
-        return None
-    except Exception as e:
-        logger.error(f"Error retrieving session data: {e}")
-        return None
-
 def create_ai_summary_for_feature_analysis(analysis_data: Dict[str, Any]) -> Dict[str, Any]:
     """Summarizes the detailed feature analysis into a compact format suitable for an LLM prompt"""
     try:
@@ -896,35 +867,28 @@ def calculate_feature_business_impact(feature_result: Dict[str, Any], feature_im
         logger.warning(f"Error calculating business impact: {e}")
         return feature_result.get('drift_score', 0.0)
 
-@router.get("/feature-analysis/{session_id}")
-async def get_feature_analysis(session_id: str):
+@router.post("/feature-analysis")
+async def get_feature_analysis(request: AnalysisRequest):
     """
-    Get comprehensive feature drift analysis for uploaded datasets with enhanced statistical methods
+    Get comprehensive feature drift analysis for datasets loaded from S3
     
     Args:
-        session_id: Session identifier for uploaded data
+        request: AnalysisRequest containing S3 URLs and configuration
         
     Returns:
         Enhanced feature analysis results with multiple drift detection methods, insights and recommendations
     """
     try:
-        # Retrieve session data
-        session_data = get_session_data(session_id)
-        if session_data is None:
-            raise HTTPException(status_code=404, detail="Session not found. Please upload data first.")
+        # Load data from S3 URLs
+        reference_df = load_s3_csv(request.reference_url)
+        current_df = load_s3_csv(request.current_url)
         
-        # Extract DataFrames
-        reference_df = session_data["reference_df"]
-        current_df = session_data["current_df"]
-        
-        # Validate data
-        if reference_df.empty or current_df.empty:
-            raise HTTPException(status_code=400, detail="One or both datasets are empty")
+        # Validate datasets
+        validate_dataframe(reference_df, "Reference")
+        validate_dataframe(current_df, "Current")
         
         # Get common columns
-        common_columns = session_data.get("common_columns", 
-            list(set(reference_df.columns) & set(current_df.columns))
-        )
+        common_columns = list(set(reference_df.columns) & set(current_df.columns))
         
         if not common_columns:
             raise HTTPException(status_code=400, detail="No common columns found between datasets")
@@ -1060,11 +1024,11 @@ async def get_feature_analysis(session_id: str):
                 "low_drift": int(len(low_features))                # Ensure Python int
             },
             "dataset_info": {
-                "reference_filename": session_data.get("reference_filename", ""),
-                "current_filename": session_data.get("current_filename", ""),
+                "reference_filename": request.reference_url.split('/')[-1] if request.reference_url else "",
+                "current_filename": request.current_url.split('/')[-1] if request.current_url else "",
                 # Convert shape tuples to ensure Python ints
-                "reference_shape": tuple(int(x) for x in session_data.get("reference_shape", (0, 0))),
-                "current_shape": tuple(int(x) for x in session_data.get("current_shape", (0, 0)))
+                "reference_shape": tuple(int(x) for x in reference_df.shape),
+                "current_shape": tuple(int(x) for x in current_df.shape)
             }
         }
         
@@ -1126,11 +1090,11 @@ async def get_feature_analysis(session_id: str):
         # Convert numpy types to native Python types for JSON serialization
         result = convert_numpy_types(result)
         
-        logger.info(f"Feature analysis completed successfully for session {session_id}")
+        logger.info(f"Feature analysis completed successfully")
         return result
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Feature analysis failed for session {session_id}: {str(e)}")
+        logger.error(f"Feature analysis failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Feature analysis failed: {str(e)}")
