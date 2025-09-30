@@ -19,6 +19,140 @@ class PerformanceComparisonService:
     def __init__(self):
         pass
     
+    def _is_higher_better(self, metric_name: str) -> bool:
+        """
+        Determine if higher values are better for a given metric
+        
+        Args:
+            metric_name: Name of the metric
+            
+        Returns:
+            Boolean indicating if higher is better
+        """
+        # Metrics where lower is better
+        lower_is_better_terms = [
+            "error", "loss", "mse", "rmse", "mae", "mape", "max_error", 
+            "mean_squared_error", "mean_absolute_error", "log_loss"
+        ]
+        
+        metric_lower = metric_name.lower()
+        for term in lower_is_better_terms:
+            if term in metric_lower:
+                return False
+        return True
+    
+    def _calculate_delta_metrics(self, ref_metrics: Dict[str, Any], 
+                                curr_metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Calculate clear delta values for all metrics
+        
+        Args:
+            ref_metrics: Reference model metrics
+            curr_metrics: Current model metrics
+            
+        Returns:
+            Dictionary with delta values and improvement indicators
+        """
+        delta_metrics = {}
+        
+        # Skip non-numeric keys
+        skip_keys = {'confusion_matrix', 'classification_report', 'error', 
+                    'precision_per_class', 'recall_per_class', 'f1_score_per_class'}
+        
+        for metric_name in ref_metrics:
+            if metric_name in skip_keys or metric_name not in curr_metrics:
+                continue
+                
+            if isinstance(ref_metrics[metric_name], (int, float)) and isinstance(curr_metrics[metric_name], (int, float)):
+                ref_value = float(ref_metrics[metric_name])
+                curr_value = float(curr_metrics[metric_name])
+                
+                # Calculate delta values
+                absolute_change = curr_value - ref_value
+                percentage_change = (absolute_change / ref_value * 100) if ref_value != 0 else 0.0
+                
+                # Determine if this is an improvement
+                higher_is_better = self._is_higher_better(metric_name)
+                improved = absolute_change > 0 if higher_is_better else absolute_change < 0
+                
+                # Determine change magnitude
+                abs_percent_change = abs(percentage_change)
+                if abs_percent_change >= 20:
+                    magnitude = "Large"
+                elif abs_percent_change >= 10:
+                    magnitude = "Medium"
+                elif abs_percent_change >= 5:
+                    magnitude = "Small"
+                else:
+                    magnitude = "Minimal"
+                
+                delta_metrics[metric_name] = {
+                    "reference_value": ref_value,
+                    "current_value": curr_value,
+                    "absolute_change": round(absolute_change, 6),
+                    "percentage_change": round(percentage_change, 2),
+                    "improved": improved,
+                    "magnitude": magnitude,
+                    "direction": "increase" if absolute_change > 0 else "decrease" if absolute_change < 0 else "no_change"
+                }
+        
+        return delta_metrics
+    
+    def _create_detailed_metric_comparison(self, ref_metrics: Dict[str, Any], 
+                                         curr_metrics: Dict[str, Any], 
+                                         delta_metrics: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a detailed metric comparison table suitable for frontend display
+        
+        Args:
+            ref_metrics: Reference model metrics
+            curr_metrics: Current model metrics
+            delta_metrics: Calculated delta metrics
+            
+        Returns:
+            Dictionary with detailed comparison data
+        """
+        detailed_comparison = {
+            "table_data": [],
+            "summary": {
+                "total_metrics": len(delta_metrics),
+                "improved_metrics": 0,
+                "degraded_metrics": 0,
+                "unchanged_metrics": 0
+            }
+        }
+        
+        for metric_name, delta_data in delta_metrics.items():
+            # Count improvements/degradations
+            if delta_data["improved"]:
+                detailed_comparison["summary"]["improved_metrics"] += 1
+            elif delta_data["direction"] == "no_change":
+                detailed_comparison["summary"]["unchanged_metrics"] += 1
+            else:
+                detailed_comparison["summary"]["degraded_metrics"] += 1
+            
+            # Create table row
+            table_row = {
+                "metric": metric_name.replace("_", " ").title(),
+                "reference_value": delta_data["reference_value"],
+                "current_value": delta_data["current_value"],
+                "absolute_change": delta_data["absolute_change"],
+                "percentage_change": delta_data["percentage_change"],
+                "change_direction": delta_data["direction"],
+                "improvement_status": "Improved" if delta_data["improved"] else "Degraded" if delta_data["direction"] != "no_change" else "Unchanged",
+                "change_magnitude": delta_data["magnitude"],
+                "higher_is_better": self._is_higher_better(metric_name)
+            }
+            
+            detailed_comparison["table_data"].append(table_row)
+        
+        # Sort by absolute percentage change (largest changes first)
+        detailed_comparison["table_data"].sort(
+            key=lambda x: abs(x["percentage_change"]), reverse=True
+        )
+        
+        return detailed_comparison
+    
     def analyze_performance_comparison(self, 
                                      y_true: np.ndarray,
                                      pred_ref: np.ndarray, 
@@ -42,13 +176,15 @@ class PerformanceComparisonService:
             model_curr: Current model object (optional)
             
         Returns:
-            Dictionary with complete performance comparison analysis
+            Dictionary with complete performance comparison analysis including delta values
         """
         try:
             analysis_results = {
                 "analysis_type": "performance_comparison",
                 "summary": {},
                 "metrics_comparison": {},
+                "delta_metrics": {},  # New section for clear delta values
+                "detailed_metric_comparison": {},  # Enhanced detailed comparison
                 "statistical_tests": {},
                 "effect_size_analysis": {},
                 "prediction_drift": {},
@@ -66,51 +202,65 @@ class PerformanceComparisonService:
             if "error" in ref_metrics or "error" in curr_metrics:
                 return {"error": "Failed to calculate basic metrics"}
             
-            # 2. Calculate metrics differences and drift analysis
+            # 2. Calculate clear delta metrics with improvement indicators
+            delta_metrics = self._calculate_delta_metrics(ref_metrics, curr_metrics)
+            
+            # 3. Create detailed metric comparison for frontend display
+            detailed_metric_comparison = self._create_detailed_metric_comparison(
+                ref_metrics, curr_metrics, delta_metrics
+            )
+            
+            # 4. Calculate traditional metrics differences and drift analysis (for backward compatibility)
             metrics_diff = metrics_calculation_service.calculate_metrics_difference(
                 ref_metrics, curr_metrics
             )
             
-            # 3. Performance degradation analysis
+            # 5. Performance degradation analysis
             degradation_analysis = metrics_calculation_service.performance_degradation_analysis(
                 ref_metrics, curr_metrics
             )
             
-            # 4. Statistical significance testing
+            # 6. Statistical significance testing
             statistical_results = statistical_tests_service.run_all_tests(
                 y_true, pred_ref, pred_curr, pred_ref_proba, pred_curr_proba, X, model_ref, model_curr
             )
             
-            # 5. Effect size analysis
+            # 7. Effect size analysis
             ref_accuracy_array = np.array([ref_metrics["accuracy"]])
             curr_accuracy_array = np.array([curr_metrics["accuracy"]])
             effect_analysis = effect_size_service.comprehensive_effect_analysis(
                 ref_accuracy_array, curr_accuracy_array, "Reference Model", "Current Model"
             )
             
-            # 6. Prediction distribution drift (PSI)
+            # 8. Prediction distribution drift (PSI)
             prediction_drift = {}
             if pred_ref_proba is not None and pred_curr_proba is not None:
                 prediction_drift = psi_service.calculate_prediction_psi(pred_ref_proba, pred_curr_proba)
             
-            # 7. Overall performance assessment
+            # 9. Overall performance assessment (enhanced to use delta metrics)
             overall_assessment = self._generate_overall_assessment(
-                metrics_diff, degradation_analysis, statistical_results, effect_analysis, prediction_drift
+                metrics_diff, degradation_analysis, statistical_results, effect_analysis, 
+                prediction_drift, delta_metrics
             )
             
-            # Compile results
+            # Compile results with enhanced structure
             analysis_results.update({
                 "summary": {
                     "reference_samples": len(y_true),
                     "current_samples": len(y_true),
-                    "metrics_analyzed": len([k for k in metrics_diff.keys() if k != "drift_summary"])
+                    "metrics_analyzed": len(delta_metrics),
+                    "metrics_improved": detailed_metric_comparison["summary"]["improved_metrics"],
+                    "metrics_degraded": detailed_metric_comparison["summary"]["degraded_metrics"],
+                    "metrics_unchanged": detailed_metric_comparison["summary"]["unchanged_metrics"]
                 },
                 "metrics_comparison": {
                     "reference_metrics": ref_metrics,
                     "current_metrics": curr_metrics,
-                    "metrics_differences": metrics_diff,
+                    "metrics_differences": metrics_diff,  # Legacy format for backward compatibility
                     "degradation_analysis": degradation_analysis
                 },
+                "delta_metrics": delta_metrics,  # New clear delta values section
+                "detailed_metric_comparison": detailed_metric_comparison,  # Enhanced detailed comparison
                 "statistical_tests": statistical_results,
                 "effect_size_analysis": effect_analysis,
                 "prediction_drift": prediction_drift,
@@ -124,7 +274,7 @@ class PerformanceComparisonService:
     
     def _generate_overall_assessment(self, metrics_diff: Dict, degradation_analysis: Dict,
                                    statistical_results: Dict, effect_analysis: Dict,
-                                   prediction_drift: Dict) -> Dict[str, Any]:
+                                   prediction_drift: Dict, delta_metrics: Dict) -> Dict[str, Any]:
         """Generate overall assessment of model performance comparison"""
         
         try:
@@ -133,10 +283,49 @@ class PerformanceComparisonService:
                 "drift_severity": "Minimal",
                 "key_findings": [],
                 "recommendations": [],
-                "risk_level": "Low"
+                "risk_level": "Low",
+                "delta_summary": {
+                    "significant_changes": [],
+                    "largest_improvement": None,
+                    "largest_degradation": None
+                }
             }
             
-            # Check for drift indicators
+            # Analyze delta metrics for key insights
+            significant_deltas = []
+            improvements = []
+            degradations = []
+            
+            for metric_name, delta_data in delta_metrics.items():
+                if abs(delta_data["percentage_change"]) >= 5:  # 5% threshold
+                    significant_deltas.append({
+                        "metric": metric_name.replace("_", " ").title(),
+                        "change": f"{delta_data['percentage_change']:+.1f}%",
+                        "improved": delta_data["improved"]
+                    })
+                    
+                    if delta_data["improved"]:
+                        improvements.append((metric_name, delta_data["percentage_change"]))
+                    else:
+                        degradations.append((metric_name, abs(delta_data["percentage_change"])))
+            
+            assessment["delta_summary"]["significant_changes"] = significant_deltas[:5]  # Top 5
+            
+            if improvements:
+                best_improvement = max(improvements, key=lambda x: abs(x[1]))
+                assessment["delta_summary"]["largest_improvement"] = {
+                    "metric": best_improvement[0].replace("_", " ").title(),
+                    "improvement": f"{best_improvement[1]:+.1f}%"
+                }
+            
+            if degradations:
+                worst_degradation = max(degradations, key=lambda x: x[1])
+                assessment["delta_summary"]["largest_degradation"] = {
+                    "metric": worst_degradation[0].replace("_", " ").title(),
+                    "degradation": f"{worst_degradation[1]:.1f}%"
+                }
+            
+            # Check for drift indicators (existing logic)
             drift_indicators = 0
             
             # 1. Metrics degradation check
@@ -228,24 +417,18 @@ class PerformanceComparisonService:
                 return analysis_results
             
             overall_assessment = analysis_results["overall_assessment"]
-            metrics_diff = analysis_results["metrics_comparison"]["metrics_differences"]
+            delta_metrics = analysis_results.get("delta_metrics", {})
             
-            # Key performance changes
+            # Key performance changes using new delta metrics
             key_changes = []
-            if "drift_summary" in metrics_diff:
-                for metric, diff_data in metrics_diff.items():
-                    if metric == "drift_summary" or "error" in str(diff_data):
-                        continue
-                    
-                    if isinstance(diff_data, dict) and "relative_difference" in diff_data:
-                        rel_change = diff_data["relative_difference"]
-                        if abs(rel_change) >= 5:  # 5% threshold
-                            direction = "improved" if rel_change > 0 else "degraded"
-                            key_changes.append({
-                                "metric": metric.replace("_", " ").title(),
-                                "change_percentage": f"{rel_change:+.1f}%",
-                                "direction": direction
-                            })
+            for metric_name, delta_data in delta_metrics.items():
+                if abs(delta_data["percentage_change"]) >= 5:  # 5% threshold
+                    key_changes.append({
+                        "metric": metric_name.replace("_", " ").title(),
+                        "change_percentage": f"{delta_data['percentage_change']:+.1f}%",
+                        "direction": "improved" if delta_data["improved"] else "degraded",
+                        "magnitude": delta_data["magnitude"]
+                    })
             
             # Sort by magnitude of change
             key_changes.sort(key=lambda x: abs(float(x["change_percentage"].replace("%", "").replace("+", ""))), reverse=True)
@@ -257,6 +440,7 @@ class PerformanceComparisonService:
                 "key_performance_changes": key_changes[:5],  # Top 5 changes
                 "primary_concerns": overall_assessment["key_findings"][:3],  # Top 3 findings
                 "immediate_actions": overall_assessment["recommendations"][:2],  # Top 2 recommendations
+                "delta_summary": overall_assessment.get("delta_summary", {}),  # New delta summary
                 "detailed_analysis_available": True
             }
             

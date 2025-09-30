@@ -56,11 +56,13 @@ class StatisticalTestsService:
             
             return {
                 "test_name": "McNemar's Test",
-                "statistic": float(statistic),
+                "test_statistic": float(statistic),  # Add test_statistic for consistency
+                "statistic": float(statistic),  # Keep for backward compatibility
                 "p_value": float(p_value),
                 "critical_value": stats.chi2.ppf(1 - self.alpha, df=1),
                 "significant": p_value < self.alpha,
                 "interpretation": "Current model significantly different" if p_value < self.alpha else "No significant difference",
+                "method_description": "Tests significance of differences in binary classification accuracy using contingency table analysis",
                 "effect_size": {
                     "odds_ratio": float(odds_ratio),
                     "contingency_table": {"a": int(a), "b": int(b), "c": int(c), "d": int(d)}
@@ -68,7 +70,16 @@ class StatisticalTestsService:
                 "alpha": self.alpha
             }
         except Exception as e:
-            return {"error": f"McNemar's test failed: {str(e)}"}
+            return {
+                "test_name": "McNemar's Test",
+                "test_statistic": None,
+                "statistic": None,
+                "p_value": None,
+                "significant": False,
+                "interpretation": "McNemar's test failed due to error",
+                "method_description": "Tests significance of differences in binary classification accuracy using contingency table analysis",
+                "error": f"McNemar's test failed: {str(e)}"
+            }
     
     def delong_test(self, y_true: np.ndarray, pred_ref_proba: np.ndarray, pred_curr_proba: np.ndarray) -> Dict[str, Any]:
         """
@@ -150,13 +161,27 @@ class StatisticalTestsService:
                 "auc_difference": float(auc_ref - auc_curr),
                 "z_score": float(z_score),
                 "p_value": float(p_value),
+                "test_statistic": float(z_score),  # Add test statistic
                 "significant": p_value < self.alpha,
                 "interpretation": "Significant AUC difference" if p_value < self.alpha else "No significant AUC difference",
                 "variance_difference": float(var_diff),
                 "alpha": self.alpha
             }
         except Exception as e:
-            return {"error": f"DeLong's test failed: {str(e)}"}
+            return {
+                "test_name": "DeLong's Test",
+                "auc_reference": None,
+                "auc_current": None,
+                "auc_difference": None,
+                "z_score": None,
+                "p_value": None,
+                "test_statistic": None,
+                "significant": False,
+                "interpretation": "DeLong's test failed due to error",
+                "variance_difference": None,
+                "alpha": self.alpha,
+                "error": f"DeLong's test failed: {str(e)}"
+            }
     
     def five_two_cv_test(self, X: np.ndarray, y: np.ndarray, model_ref, model_curr) -> Dict[str, Any]:
         """
@@ -219,6 +244,7 @@ class StatisticalTestsService:
             return {
                 "test_name": "5x2 Cross-Validation F-Test",
                 "f_statistic": float(f_statistic),
+                "test_statistic": float(f_statistic),  # Add test statistic
                 "p_value": float(p_value),
                 "degrees_freedom": {"numerator": 5, "denominator": 5},
                 "significant": p_value < self.alpha,
@@ -228,7 +254,19 @@ class StatisticalTestsService:
                 "alpha": self.alpha
             }
         except Exception as e:
-            return {"error": f"5x2 CV test failed: {str(e)}"}
+            return {
+                "test_name": "5x2 Cross-Validation F-Test",
+                "f_statistic": None,
+                "test_statistic": None,
+                "p_value": None,
+                "degrees_freedom": {"numerator": 5, "denominator": 5},
+                "significant": False,
+                "interpretation": "5x2 CV test failed due to error",
+                "mean_difference": None,
+                "differences": None,
+                "alpha": self.alpha,
+                "error": f"5x2 CV test failed: {str(e)}"
+            }
     
     def bootstrap_test(self, y_true: np.ndarray, pred_ref: np.ndarray, pred_curr: np.ndarray, 
                       n_bootstrap: int = 1000, metric_func=accuracy_score) -> Dict[str, Any]:
@@ -247,22 +285,76 @@ class StatisticalTestsService:
             Dictionary with test results
         """
         try:
+            # Input validation
+            if len(y_true) != len(pred_ref) or len(y_true) != len(pred_curr):
+                return {
+                    "test_name": "Bootstrap Test",
+                    "mean_difference": None,
+                    "std_difference": None,
+                    "confidence_interval": {
+                        "lower": None,
+                        "upper": None,
+                        "confidence_level": 1 - self.alpha
+                    },
+                    "p_value": None,
+                    "significant": False,
+                    "interpretation": "Error: Input arrays have different lengths",
+                    "method_description": "Non-parametric test using bootstrap resampling to estimate confidence intervals",
+                    "error": "Input arrays have different lengths"
+                }
+            
             n_samples = len(y_true)
+            if n_samples < 2:
+                return {
+                    "test_name": "Bootstrap Test",
+                    "mean_difference": None,
+                    "std_difference": None,
+                    "confidence_interval": {
+                        "lower": None,
+                        "upper": None,
+                        "confidence_level": 1 - self.alpha
+                    },
+                    "p_value": None,
+                    "significant": False,
+                    "interpretation": "Insufficient data for bootstrap testing (need at least 2 observations)",
+                    "method_description": "Non-parametric test using bootstrap resampling to estimate confidence intervals"
+                }
+            
             differences = []
             
             # Bootstrap sampling
             for _ in range(n_bootstrap):
-                # Sample with replacement
-                indices = np.random.choice(n_samples, size=n_samples, replace=True)
-                
-                y_boot = y_true[indices]
-                pred_ref_boot = pred_ref[indices]
-                pred_curr_boot = pred_curr[indices]
-                
-                # Calculate metric difference
-                metric_ref = metric_func(y_boot, pred_ref_boot)
-                metric_curr = metric_func(y_boot, pred_curr_boot)
-                differences.append(metric_ref - metric_curr)
+                try:
+                    # Sample with replacement
+                    indices = np.random.choice(n_samples, size=n_samples, replace=True)
+                    
+                    y_boot = y_true[indices]
+                    pred_ref_boot = pred_ref[indices]
+                    pred_curr_boot = pred_curr[indices]
+                    
+                    # Calculate metric difference
+                    metric_ref = metric_func(y_boot, pred_ref_boot)
+                    metric_curr = metric_func(y_boot, pred_curr_boot)
+                    differences.append(metric_ref - metric_curr)
+                except Exception as e:
+                    # Skip this bootstrap iteration if it fails
+                    continue
+            
+            if len(differences) < 100:  # Need sufficient bootstrap samples
+                return {
+                    "test_name": "Bootstrap Test",
+                    "mean_difference": None,
+                    "std_difference": None,
+                    "confidence_interval": {
+                        "lower": None,
+                        "upper": None,
+                        "confidence_level": 1 - self.alpha
+                    },
+                    "p_value": None,
+                    "significant": False,
+                    "interpretation": "Bootstrap sampling failed - insufficient valid samples",
+                    "method_description": "Non-parametric test using bootstrap resampling to estimate confidence intervals"
+                }
             
             differences = np.array(differences)
             
@@ -285,6 +377,11 @@ class StatisticalTestsService:
                 p_value = 2 * np.mean(differences >= 0)
             p_value = min(p_value, 1.0)
             
+            # Calculate actual difference as test statistic
+            original_ref_metric = metric_func(y_true, pred_ref)
+            original_curr_metric = metric_func(y_true, pred_curr)
+            test_statistic = original_ref_metric - original_curr_metric
+            
             return {
                 "test_name": "Bootstrap Test",
                 "mean_difference": float(np.mean(differences)),
@@ -295,13 +392,31 @@ class StatisticalTestsService:
                     "confidence_level": confidence_level
                 },
                 "p_value": float(p_value),
+                "test_statistic": float(test_statistic),  # Add test statistic
                 "significant": significant,
                 "interpretation": "Significant performance difference" if significant else "No significant difference",
-                "n_bootstrap": n_bootstrap,
+                "method_description": "Non-parametric test using bootstrap resampling to estimate confidence intervals",
+                "n_bootstrap": len(differences),
                 "alpha": self.alpha
             }
+            
         except Exception as e:
-            return {"error": f"Bootstrap test failed: {str(e)}"}
+            return {
+                "test_name": "Bootstrap Test",
+                "mean_difference": None,
+                "std_difference": None,
+                "confidence_interval": {
+                    "lower": None,
+                    "upper": None,
+                    "confidence_level": 1 - self.alpha
+                },
+                "p_value": None,
+                "test_statistic": None,
+                "significant": False,
+                "interpretation": "Bootstrap test failed due to error",
+                "method_description": "Non-parametric test using bootstrap resampling to estimate confidence intervals",
+                "error": f"Bootstrap test failed: {str(e)}"
+            }
     
     def diebold_mariano_test(self, errors_ref: np.ndarray, errors_curr: np.ndarray) -> Dict[str, Any]:
         """
@@ -337,6 +452,7 @@ class StatisticalTestsService:
             return {
                 "test_name": "Diebold-Mariano Test",
                 "dm_statistic": float(dm_statistic),
+                "test_statistic": float(dm_statistic),  # Add test statistic
                 "p_value": float(p_value),
                 "mean_loss_differential": float(d_bar),
                 "variance_loss_differential": float(gamma_0),
@@ -345,7 +461,18 @@ class StatisticalTestsService:
                 "alpha": self.alpha
             }
         except Exception as e:
-            return {"error": f"Diebold-Mariano test failed: {str(e)}"}
+            return {
+                "test_name": "Diebold-Mariano Test",
+                "dm_statistic": None,
+                "test_statistic": None,
+                "p_value": None,
+                "mean_loss_differential": None,
+                "variance_loss_differential": None,
+                "significant": False,
+                "interpretation": "Diebold-Mariano test failed due to error",
+                "alpha": self.alpha,
+                "error": f"Diebold-Mariano test failed: {str(e)}"
+            }
     
     def paired_t_test(self, metric_ref: np.ndarray, metric_curr: np.ndarray) -> Dict[str, Any]:
         """
@@ -360,8 +487,57 @@ class StatisticalTestsService:
             Dictionary with test results
         """
         try:
+            # Input validation
+            if len(metric_ref) != len(metric_curr):
+                return {
+                    "test_name": "Paired t-Test",
+                    "t_statistic": None,
+                    "p_value": None,
+                    "degrees_freedom": 0,
+                    "mean_difference": None,
+                    "std_difference": None,
+                    "confidence_interval": {"lower": None, "upper": None},
+                    "significant": False,
+                    "interpretation": "Error: Arrays have different lengths",
+                    "method_description": "Classical parametric test for comparing paired observations of model performance",
+                    "error": "Input arrays have different lengths"
+                }
+            
             # Calculate differences
             differences = metric_ref - metric_curr
+            
+            # Handle edge cases
+            if len(differences) <= 1:
+                return {
+                    "test_name": "Paired t-Test",
+                    "t_statistic": None,
+                    "p_value": None,
+                    "degrees_freedom": len(differences) - 1 if len(differences) > 0 else 0,
+                    "mean_difference": float(np.mean(differences)) if len(differences) > 0 else None,
+                    "std_difference": None,
+                    "confidence_interval": {"lower": None, "upper": None},
+                    "significant": False,
+                    "interpretation": "Insufficient data for significance testing (need at least 2 observations)",
+                    "method_description": "Classical parametric test for comparing paired observations of model performance"
+                }
+            
+            # Calculate standard deviation with proper handling of zero variance
+            std_diff = np.std(differences, ddof=1)
+            mean_diff = np.mean(differences)
+            
+            if std_diff == 0 or np.isclose(std_diff, 0, atol=1e-10):
+                return {
+                    "test_name": "Paired t-Test",
+                    "t_statistic": None,
+                    "p_value": None,
+                    "degrees_freedom": len(differences) - 1,
+                    "mean_difference": float(mean_diff),
+                    "std_difference": 0.0,
+                    "confidence_interval": {"lower": None, "upper": None},
+                    "significant": False,
+                    "interpretation": "No variation in differences - cannot perform t-test",
+                    "method_description": "Classical parametric test for comparing paired observations of model performance"
+                }
             
             # Perform paired t-test
             t_statistic, p_value = stats.ttest_1samp(differences, 0)
@@ -370,12 +546,12 @@ class StatisticalTestsService:
             df = len(differences) - 1
             
             # Effect size (Cohen's d)
-            cohen_d = np.mean(differences) / np.std(differences, ddof=1) if np.std(differences, ddof=1) > 0 else 0
+            cohen_d = mean_diff / std_diff
             
             # Confidence interval for mean difference
             sem = stats.sem(differences)
             ci_lower, ci_upper = stats.t.interval(1 - self.alpha, df, 
-                                                 loc=np.mean(differences), 
+                                                 loc=mean_diff, 
                                                  scale=sem)
             
             return {
@@ -383,8 +559,8 @@ class StatisticalTestsService:
                 "t_statistic": float(t_statistic),
                 "p_value": float(p_value),
                 "degrees_freedom": int(df),
-                "mean_difference": float(np.mean(differences)),
-                "std_difference": float(np.std(differences, ddof=1)),
+                "mean_difference": float(mean_diff),
+                "std_difference": float(std_diff),
                 "confidence_interval": {
                     "lower": float(ci_lower),
                     "upper": float(ci_upper)
@@ -394,10 +570,24 @@ class StatisticalTestsService:
                 },
                 "significant": p_value < self.alpha,
                 "interpretation": "Significant performance difference" if p_value < self.alpha else "No significant difference",
+                "method_description": "Classical parametric test for comparing paired observations of model performance",
                 "alpha": self.alpha
             }
+            
         except Exception as e:
-            return {"error": f"Paired t-test failed: {str(e)}"}
+            return {
+                "test_name": "Paired t-Test",
+                "t_statistic": None,
+                "p_value": None,
+                "degrees_freedom": 0,
+                "mean_difference": None,
+                "std_difference": None,
+                "confidence_interval": {"lower": None, "upper": None},
+                "significant": False,
+                "interpretation": "Test failed due to error",
+                "method_description": "Classical parametric test for comparing paired observations of model performance",
+                "error": f"Paired t-test failed: {str(e)}"
+            }
     
     def run_all_tests(self, y_true: np.ndarray, pred_ref: np.ndarray, pred_curr: np.ndarray,
                      pred_ref_proba: np.ndarray = None, pred_curr_proba: np.ndarray = None,

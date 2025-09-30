@@ -604,10 +604,18 @@ async def s3_model_drift_degradation_metrics(request: ModelDriftAnalysisRequest)
                 detail=f"Data preparation failed: {str(e)}. Please ensure your data is properly formatted and matches the model's expected input."
             )
         
-        # Generate predictions with error handling
+        # Generate predictions with enhanced error handling and format consistency
         try:
+            # Get binary predictions
             pred_ref = model.predict(X_ref)
             pred_curr = model.predict(X_curr)
+            
+            # Ensure predictions are in consistent format
+            pred_ref = np.asarray(pred_ref).flatten()
+            pred_curr = np.asarray(pred_curr).flatten()
+            
+            logger.info(f"Binary predictions generated. Shapes: ref={pred_ref.shape}, curr={pred_curr.shape}")
+            
         except Exception as e:
             logger.error(f"Model prediction failed: {e}")
             raise HTTPException(
@@ -615,22 +623,75 @@ async def s3_model_drift_degradation_metrics(request: ModelDriftAnalysisRequest)
                 detail=f"Model prediction failed: {str(e)}. This might be due to data format mismatch or categorical variables."
             )
         
-        # Get prediction probabilities if available
+        # Get prediction probabilities with enhanced handling
         pred_ref_proba = None
         pred_curr_proba = None
         if hasattr(model, 'predict_proba'):
             try:
-                pred_ref_proba = model.predict_proba(X_ref)
-                pred_curr_proba = model.predict_proba(X_curr)
+                pred_ref_proba_raw = model.predict_proba(X_ref)
+                pred_curr_proba_raw = model.predict_proba(X_curr)
+                
+                # Handle different probability formats
+                if len(pred_ref_proba_raw.shape) > 1 and pred_ref_proba_raw.shape[1] > 1:
+                    if pred_ref_proba_raw.shape[1] == 2:
+                        # Binary classification - use positive class probability
+                        pred_ref_proba = pred_ref_proba_raw[:, 1]
+                        pred_curr_proba = pred_curr_proba_raw[:, 1]
+                        logger.info(f"Binary classification detected - using positive class probabilities")
+                    else:
+                        # Multi-class - use maximum probability for confidence analysis
+                        pred_ref_proba = np.max(pred_ref_proba_raw, axis=1)
+                        pred_curr_proba = np.max(pred_curr_proba_raw, axis=1)
+                        logger.info(f"Multi-class classification detected - using max probabilities")
+                else:
+                    # Single probability per prediction
+                    pred_ref_proba = pred_ref_proba_raw.flatten()
+                    pred_curr_proba = pred_curr_proba_raw.flatten()
+                
+                # Ensure probabilities are in valid range [0, 1]
+                pred_ref_proba = np.clip(pred_ref_proba, 0, 1)
+                pred_curr_proba = np.clip(pred_curr_proba, 0, 1)
+                
+                # Validate probability quality
+                ref_min, ref_max = np.min(pred_ref_proba), np.max(pred_ref_proba)
+                curr_min, curr_max = np.min(pred_curr_proba), np.max(pred_curr_proba)
+                
+                logger.info(f"Probability ranges: ref=[{ref_min:.6f}, {ref_max:.6f}], curr=[{curr_min:.6f}, {curr_max:.6f}]")
+                
+                # Check for extreme probability distributions
+                if ref_max - ref_min < 0.01 or curr_max - curr_min < 0.01:
+                    logger.warning("Detected very narrow probability distribution - model may not be well calibrated")
+                
+                if ref_min < 1e-10 or curr_min < 1e-10:
+                    logger.warning("Detected extremely small probabilities - may cause numerical issues")
+                    # Set minimum threshold to avoid numerical problems
+                    pred_ref_proba = np.maximum(pred_ref_proba, 1e-10)
+                    pred_curr_proba = np.maximum(pred_curr_proba, 1e-10)
+                    
             except Exception as e:
                 logger.warning(f"Could not get prediction probabilities: {e}")
+                pred_ref_proba = None
+                pred_curr_proba = None
+
+        # Final data validation before analysis
+        logger.info(f"Data validation - X_ref shape: {X_ref.shape}, X_curr shape: {X_curr.shape}")
+        logger.info(f"Predictions - pred_ref shape: {pred_ref.shape}, pred_curr shape: {pred_curr.shape}")
+        if pred_ref_proba is not None:
+            logger.info(f"Probabilities - pred_ref_proba shape: {pred_ref_proba.shape}, pred_curr_proba shape: {pred_curr_proba.shape}")
         
+        # Ensure we have ground truth for analysis
+        if y_true_curr is None:
+            logger.warning("No current ground truth available, using reference ground truth")
+            y_true_curr = y_true_ref
+
         # Get analysis configuration
         config = request.analysis_config or {}
         
         # Run degradation metrics analysis
+        # Note: For S3 analysis, we compare the same model's performance on different datasets
+        # rather than comparing two different models
         result = degradation_metrics_service.analyze_degradation_metrics(
-            y_true=y_true_ref,  # Use reference ground truth
+            y_true=y_true_ref,  # Use reference ground truth for evaluation
             pred_ref=pred_ref,
             pred_curr=pred_curr,
             pred_ref_proba=pred_ref_proba,
@@ -640,11 +701,9 @@ async def s3_model_drift_degradation_metrics(request: ModelDriftAnalysisRequest)
             X_curr=X_curr,
             y_curr=y_true_curr,
             model_ref=model,
-            model_curr=model,
+            model_curr=model,  # Same model, different datasets
             feature_names=list(X_ref.columns) if hasattr(X_ref, 'columns') else None
-        )
-        
-        # Add metadata including model wrapper info
+        )        # Add metadata including model wrapper info
         result["analysis_metadata"] = {
             "analysis_timestamp": datetime.utcnow().isoformat(),
             "reference_dataset_size": len(reference_df),

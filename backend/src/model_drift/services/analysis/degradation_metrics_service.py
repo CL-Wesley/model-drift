@@ -52,6 +52,58 @@ class DegradationMetricsService:
             Dictionary with all three sub-tab analyses
         """
         try:
+            # Enhanced input validation
+            validation_errors = []
+            
+            # Check required arrays
+            if pred_ref is None or len(pred_ref) == 0:
+                validation_errors.append("Reference predictions are empty or None")
+            if pred_curr is None or len(pred_curr) == 0:
+                validation_errors.append("Current predictions are empty or None")
+            
+            # Check probability arrays (can be None but if provided should be valid)
+            if pred_ref_proba is not None:
+                if len(pred_ref_proba) == 0:
+                    validation_errors.append("Reference probabilities array is empty")
+                elif not isinstance(pred_ref_proba, np.ndarray):
+                    pred_ref_proba = np.asarray(pred_ref_proba)
+                    
+            if pred_curr_proba is not None:
+                if len(pred_curr_proba) == 0:
+                    validation_errors.append("Current probabilities array is empty")
+                elif not isinstance(pred_curr_proba, np.ndarray):
+                    pred_curr_proba = np.asarray(pred_curr_proba)
+            
+            # Check array length consistency
+            if pred_ref is not None and pred_curr is not None:
+                if len(pred_ref) != len(pred_curr):
+                    validation_errors.append(f"Prediction array length mismatch: ref={len(pred_ref)}, curr={len(pred_curr)}")
+            
+            if pred_ref_proba is not None and pred_curr_proba is not None:
+                if len(pred_ref_proba) != len(pred_curr_proba):
+                    validation_errors.append(f"Probability array length mismatch: ref={len(pred_ref_proba)}, curr={len(pred_curr_proba)}")
+            
+            # If we have validation errors, return them
+            if validation_errors:
+                return {
+                    "analysis_type": "degradation_metrics",
+                    "error": f"Input validation failed: {'; '.join(validation_errors)}",
+                    "sub_tabs": {
+                        "model_disagreement": {"error": "Input validation failed"},
+                        "confidence_analysis": {"error": "Input validation failed"},
+                        "feature_importance_drift": {"error": "Input validation failed"}
+                    }
+                }
+
+            # Log input data quality for debugging
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Degradation metrics analysis starting...")
+            logger.info(f"Prediction shapes: ref={pred_ref.shape if pred_ref is not None else None}, curr={pred_curr.shape if pred_curr is not None else None}")
+            if pred_ref_proba is not None:
+                logger.info(f"Probability shapes: ref={pred_ref_proba.shape}, curr={pred_curr_proba.shape}")
+                logger.info(f"Probability ranges: ref=[{np.min(pred_ref_proba):.6f}, {np.max(pred_ref_proba):.6f}], curr=[{np.min(pred_curr_proba):.6f}, {np.max(pred_curr_proba):.6f}]")
+            
             analysis_results = {
                 "analysis_type": "degradation_metrics",
                 "sub_tabs": {
@@ -93,17 +145,50 @@ class DegradationMetricsService:
     
     def _analyze_model_disagreement(self, pred_ref_proba: np.ndarray, 
                                   pred_curr_proba: np.ndarray) -> Dict[str, Any]:
-        """Analyze model disagreement (Sub-tab 1)"""
+        """Analyze model disagreement (Sub-tab 1) with enhanced validation"""
         
         try:
+            # Validate inputs
+            if pred_ref_proba is None or pred_curr_proba is None:
+                return {"error": "Prediction probabilities are required for model disagreement analysis"}
+            
+            if len(pred_ref_proba) == 0 or len(pred_curr_proba) == 0:
+                return {"error": "Empty prediction arrays provided"}
+            
+            if len(pred_ref_proba) != len(pred_curr_proba):
+                return {"error": f"Prediction array length mismatch: {len(pred_ref_proba)} vs {len(pred_curr_proba)}"}
+            
+            # Check for valid probability ranges
+            ref_min, ref_max = np.min(pred_ref_proba), np.max(pred_ref_proba)
+            curr_min, curr_max = np.min(pred_curr_proba), np.max(pred_curr_proba)
+            
+            if ref_min < 0 or ref_max > 1 or curr_min < 0 or curr_max > 1:
+                return {"error": f"Invalid probability values detected. Reference: [{ref_min:.6f}, {ref_max:.6f}], Current: [{curr_min:.6f}, {curr_max:.6f}]"}
+            
             # Get comprehensive disagreement analysis
             disagreement_result = model_disagreement_service.comprehensive_disagreement_analysis(
                 pred_ref_proba, pred_curr_proba, sample_size=1000
             )
             
             if "error" in disagreement_result:
-                return disagreement_result
+                return {"error": f"Model disagreement analysis failed: {disagreement_result['error']}"}
             
+            # Validate required fields in disagreement_result
+            required_fields = ["disagreement_statistics", "scatter_plot", "threshold_analysis"]
+            missing_fields = [field for field in required_fields if field not in disagreement_result]
+            if missing_fields:
+                return {"error": f"Model disagreement service missing required fields: {missing_fields}"}
+            
+            # Validate disagreement_statistics has required metrics
+            stats = disagreement_result["disagreement_statistics"]
+            if "error" in stats:
+                return {"error": f"Disagreement statistics calculation failed: {stats['error']}"}
+                
+            required_stats = ["mean_absolute_difference", "maximum_difference", "standard_deviation", "pearson_correlation"]
+            missing_stats = [stat for stat in required_stats if stat not in stats]
+            if missing_stats:
+                return {"error": f"Model disagreement statistics missing required metrics: {missing_stats}"}
+
             # Format for frontend consumption
             formatted_result = {
                 "prediction_scatter_plot": disagreement_result["scatter_plot"],
@@ -128,31 +213,89 @@ class DegradationMetricsService:
     
     def _analyze_confidence(self, y_true: np.ndarray, pred_ref_proba: np.ndarray,
                           pred_curr_proba: np.ndarray) -> Dict[str, Any]:
-        """Analyze confidence and calibration (Sub-tab 2)"""
+        """Analyze confidence and calibration (Sub-tab 2) with enhanced validation"""
         
         try:
+            # Validate inputs
+            if pred_ref_proba is None or pred_curr_proba is None:
+                return {"error": "Prediction probabilities are required for confidence analysis"}
+            
+            if y_true is None or len(y_true) == 0:
+                return {"error": "Ground truth labels are required for confidence analysis"}
+            
+            if len(pred_ref_proba) != len(y_true) or len(pred_curr_proba) != len(y_true):
+                return {"error": f"Array length mismatch. Ground truth: {len(y_true)}, Ref proba: {len(pred_ref_proba)}, Curr proba: {len(pred_curr_proba)}"}
+            
+            # Check for valid probability and label ranges
+            if np.min(pred_ref_proba) < 0 or np.max(pred_ref_proba) > 1:
+                return {"error": f"Invalid reference probability values: [{np.min(pred_ref_proba):.6f}, {np.max(pred_ref_proba):.6f}]"}
+            
+            if np.min(pred_curr_proba) < 0 or np.max(pred_curr_proba) > 1:
+                return {"error": f"Invalid current probability values: [{np.min(pred_curr_proba):.6f}, {np.max(pred_curr_proba):.6f}]"}
+            
             # Get comprehensive calibration analysis for both models
             calibration_comparison = calibration_service.compare_calibrations(
                 y_true, pred_ref_proba, pred_curr_proba
             )
             
             if "error" in calibration_comparison:
-                return calibration_comparison
+                return {"error": f"Calibration comparison failed: {calibration_comparison['error']}"}
+            
+            # Validate calibration comparison structure
+            required_keys = ["reference_analysis", "current_analysis", "metric_changes"]
+            missing_keys = [key for key in required_keys if key not in calibration_comparison]
+            if missing_keys:
+                return {"error": f"Calibration comparison missing required keys: {missing_keys}"}
             
             ref_analysis = calibration_comparison["reference_analysis"]
             curr_analysis = calibration_comparison["current_analysis"]
             
-            # Format confidence score distribution for bar chart
+            # Validate reference and current analysis structure
+            for analysis_name, analysis in [("reference", ref_analysis), ("current", curr_analysis)]:
+                if "error" in analysis:
+                    return {"error": f"{analysis_name.capitalize()} analysis failed: {analysis['error']}"}
+                if "metrics" not in analysis:
+                    return {"error": f"{analysis_name.capitalize()} analysis missing metrics"}
+                if "detailed_results" not in analysis:
+                    return {"error": f"{analysis_name.capitalize()} analysis missing detailed_results"}
+            
+            # Format confidence score distribution for bar chart with enhanced validation
             ref_distribution = ref_analysis["detailed_results"]["confidence_distribution"]
             curr_distribution = curr_analysis["detailed_results"]["confidence_distribution"]
             
+            # Validate distribution structure
+            if "bin_labels" not in ref_distribution or "bin_counts" not in ref_distribution:
+                return {"error": "Reference distribution missing required fields"}
+            if "bin_labels" not in curr_distribution or "bin_counts" not in curr_distribution:
+                return {"error": "Current distribution missing required fields"}
+            
+            # Handle potentially different bin structures (adaptive binning)
             confidence_distribution = []
-            for i, bin_label in enumerate(ref_distribution["bin_labels"]):
+            
+            # Use reference distribution structure as base
+            ref_labels = ref_distribution["bin_labels"]
+            ref_counts = ref_distribution["bin_counts"]
+            curr_counts = curr_distribution["bin_counts"]
+            
+            # Ensure arrays have the same length
+            min_length = min(len(ref_labels), len(ref_counts), len(curr_counts))
+            
+            for i in range(min_length):
                 confidence_distribution.append({
-                    "bin": bin_label,
-                    "reference_count": ref_distribution["bin_counts"][i],
-                    "current_count": curr_distribution["bin_counts"][i]
+                    "bin": ref_labels[i],
+                    "reference_count": ref_counts[i],
+                    "current_count": curr_counts[i] if i < len(curr_counts) else 0
                 })
+            
+            # If current distribution has more bins, add them with 0 reference count
+            if len(curr_counts) > min_length:
+                curr_labels = curr_distribution["bin_labels"]
+                for i in range(min_length, len(curr_counts)):
+                    confidence_distribution.append({
+                        "bin": curr_labels[i] if i < len(curr_labels) else f"bin_{i}",
+                        "reference_count": 0,
+                        "current_count": curr_counts[i]
+                    })
             
             # Format calibration curves for line chart
             ref_curve = ref_analysis["detailed_results"]["calibration_curve"]

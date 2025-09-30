@@ -115,17 +115,28 @@ class StatisticalSignificanceService:
             if "error" in all_tests:
                 return all_tests
             
-            # Format test results for frontend
+            # Format test results for frontend with proper null handling
             formatted_tests = {}
             
             for test_name, test_result in all_tests["tests"].items():
                 if "error" not in test_result:
+                    # Get test statistic with proper fallback to null instead of "N/A"
+                    test_statistic = test_result.get("test_statistic")
+                    if test_statistic is None:
+                        test_statistic = test_result.get("statistic")  # McNemar uses "statistic"
+                    if test_statistic is None:
+                        test_statistic = test_result.get("z_score")
+                    if test_statistic is None:
+                        test_statistic = test_result.get("f_statistic")
+                    if test_statistic is None:
+                        test_statistic = test_result.get("t_statistic")  # t-test uses "t_statistic"
+                    
                     formatted_tests[test_name] = {
                         "test_name": test_result["test_name"],
                         "p_value": test_result["p_value"],
                         "significant": test_result["significant"],
                         "interpretation": test_result["interpretation"],
-                        "test_statistic": test_result.get("test_statistic", test_result.get("z_score", test_result.get("f_statistic", "N/A"))),
+                        "test_statistic": test_statistic,  # Now properly null instead of "N/A"
                         "method_description": self._get_test_description(test_name)
                     }
             

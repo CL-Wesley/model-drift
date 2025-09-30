@@ -193,7 +193,7 @@ class CalibrationService:
     
     def confidence_distribution(self, y_prob: np.ndarray) -> Dict[str, Any]:
         """
-        Calculate confidence score distribution for histogram plotting
+        Calculate confidence score distribution for histogram plotting with adaptive binning
         
         Args:
             y_prob: Predicted probabilities
@@ -202,21 +202,75 @@ class CalibrationService:
             Dictionary with distribution data
         """
         try:
-            # Create bins for histogram
-            bin_edges = np.linspace(0, 1, self.n_bins + 1)
+            # Flatten array if needed
+            if len(y_prob.shape) > 1:
+                y_prob = y_prob.flatten()
+            
+            # Check for extreme distributions
+            unique_values = np.unique(y_prob)
+            prob_range = np.max(y_prob) - np.min(y_prob)
+            
+            # Use adaptive binning for highly skewed distributions
+            use_adaptive = len(unique_values) < self.n_bins or prob_range < 0.2
+            
+            if use_adaptive and len(unique_values) > 3:
+                # For highly skewed distributions, use percentile-based binning
+                try:
+                    percentiles = np.linspace(0, 100, self.n_bins + 1)
+                    bin_edges = np.percentile(y_prob, percentiles)
+                    # Ensure bins are unique
+                    bin_edges = np.unique(bin_edges)
+                    # Add endpoints if needed
+                    if bin_edges[0] > 0:
+                        bin_edges = np.insert(bin_edges, 0, 0)
+                    if bin_edges[-1] < 1:
+                        bin_edges = np.append(bin_edges, 1)
+                    
+                    binning_method = "adaptive_percentile"
+                except:
+                    # Fallback to regular binning if percentile fails
+                    bin_edges = np.linspace(0, 1, self.n_bins + 1)
+                    binning_method = "linear_fallback"
+            else:
+                # Use regular binning for well-distributed probabilities
+                bin_edges = np.linspace(0, 1, self.n_bins + 1)
+                binning_method = "linear"
+            
+            # Calculate histogram
             bin_counts, _ = np.histogram(y_prob, bins=bin_edges)
             
-            # Create bin labels
+            # Create bin labels with better formatting
             bin_labels = []
             for i in range(len(bin_edges) - 1):
-                bin_labels.append(f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.1f}")
+                if binning_method == "adaptive_percentile":
+                    bin_labels.append(f"{bin_edges[i]:.3f}-{bin_edges[i+1]:.3f}")
+                else:
+                    bin_labels.append(f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.1f}")
+            
+            # Calculate statistics
+            total_samples = len(y_prob)
+            bin_proportions = (bin_counts / total_samples).tolist() if total_samples > 0 else []
+            
+            # Quality metrics
+            non_empty_bins = np.sum(bin_counts > 0)
+            distribution_entropy = -np.sum([p * np.log(p) for p in bin_proportions if p > 0])
             
             return {
                 "bin_labels": bin_labels,
                 "bin_counts": bin_counts.tolist(),
-                "bin_proportions": (bin_counts / len(y_prob)).tolist(),
-                "total_samples": len(y_prob),
-                "n_bins": self.n_bins
+                "bin_proportions": bin_proportions,
+                "bin_edges": bin_edges.tolist(),
+                "total_samples": total_samples,
+                "n_bins": len(bin_labels),
+                "binning_method": binning_method,
+                "distribution_stats": {
+                    "non_empty_bins": int(non_empty_bins),
+                    "distribution_entropy": float(distribution_entropy),
+                    "probability_range": float(prob_range),
+                    "unique_values": len(unique_values),
+                    "mean_probability": float(np.mean(y_prob)),
+                    "std_probability": float(np.std(y_prob))
+                }
             }
             
         except Exception as e:
